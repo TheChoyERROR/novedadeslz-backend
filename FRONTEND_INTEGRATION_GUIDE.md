@@ -6,6 +6,14 @@
 
 ---
 
+## ⚠️ IMPORTANTE: Cloudinary Integration
+
+**El backend ahora usa Cloudinary para gestión de imágenes:**
+- Los endpoints de productos (`POST /api/products` y `PUT /api/products/{id}`) ahora reciben `multipart/form-data` en lugar de JSON
+- Las imágenes se suben como archivos binarios (File), no como URLs
+- Validación automática: solo imágenes, máximo 5MB
+- Para más detalles, consulta [CLOUDINARY_INTEGRATION.md](CLOUDINARY_INTEGRATION.md)
+
 ## 📋 TABLA DE CONTENIDOS
 
 1. [Información del Backend](#1-información-del-backend)
@@ -186,23 +194,29 @@ Obtener un producto por ID
 ```
 
 #### POST `/api/products` (Requiere ADMIN + JWT)
-Crear nuevo producto
+Crear nuevo producto con imagen
+
+**⚠️ IMPORTANTE:** Este endpoint ahora usa `multipart/form-data` para subir imágenes binarias a Cloudinary.
 
 **Headers:**
 ```
 Authorization: Bearer {token}
+Content-Type: multipart/form-data
 ```
 
-**Request:**
-```json
+**Request (multipart/form-data):**
+```
+Part 1 - "product" (application/json):
 {
   "name": "Mouse Gamer",
   "description": "Mouse RGB 16000 DPI",
   "price": 150.00,
-  "imageUrl": "https://cloudinary.com/...",
   "category": "Accesorios",
   "stock": 50
 }
+
+Part 2 - "image" (file, OBLIGATORIO):
+[Archivo binario de imagen - JPG/PNG/GIF/WEBP, máx 5MB]
 ```
 
 **Response:**
@@ -215,14 +229,30 @@ Authorization: Bearer {token}
 ```
 
 #### PUT `/api/products/{id}` (Requiere ADMIN + JWT)
-Actualizar producto existente
+Actualizar producto existente con imagen opcional
+
+**⚠️ IMPORTANTE:** Este endpoint ahora usa `multipart/form-data`. La imagen es OPCIONAL al actualizar.
 
 **Headers:**
 ```
 Authorization: Bearer {token}
+Content-Type: multipart/form-data
 ```
 
-**Request:** Igual que POST
+**Request (multipart/form-data):**
+```
+Part 1 - "product" (application/json, OBLIGATORIO):
+{
+  "name": "Mouse Gamer Pro",
+  "description": "Mouse actualizado",
+  "price": 180.00,
+  "category": "Accesorios",
+  "stock": 30
+}
+
+Part 2 - "image" (file, OPCIONAL):
+[Archivo binario de imagen - Si se envía, reemplaza la imagen anterior]
+```
 
 #### DELETE `/api/products/{id}` (Requiere ADMIN + JWT)
 Eliminar producto (soft delete)
@@ -587,20 +617,54 @@ export const productsApi = {
     return response.data.data!;
   },
 
-  // Create product (ADMIN only)
-  create: async (data: ProductRequest): Promise<ProductResponse> => {
+  // Create product with image (ADMIN only)
+  create: async (data: ProductRequest, imageFile: File): Promise<ProductResponse> => {
+    const formData = new FormData();
+
+    // Add product data as JSON blob
+    const productBlob = new Blob([JSON.stringify(data)], {
+      type: 'application/json'
+    });
+    formData.append('product', productBlob);
+
+    // Add image file
+    formData.append('image', imageFile);
+
     const response = await api.post<ApiResponse<ProductResponse>>(
       '/api/products',
-      data
+      formData,
+      {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      }
     );
     return response.data.data!;
   },
 
-  // Update product (ADMIN only)
-  update: async (id: number, data: ProductRequest): Promise<ProductResponse> => {
+  // Update product with optional image (ADMIN only)
+  update: async (id: number, data: ProductRequest, imageFile?: File): Promise<ProductResponse> => {
+    const formData = new FormData();
+
+    // Add product data as JSON blob
+    const productBlob = new Blob([JSON.stringify(data)], {
+      type: 'application/json'
+    });
+    formData.append('product', productBlob);
+
+    // Add image file if provided
+    if (imageFile) {
+      formData.append('image', imageFile);
+    }
+
     const response = await api.put<ApiResponse<ProductResponse>>(
       `/api/products/${id}`,
-      data
+      formData,
+      {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      }
     );
     return response.data.data!;
   },
@@ -935,9 +999,9 @@ export interface ProductRequest {
   name: string;
   description?: string;
   price: number;
-  imageUrl?: string;
   category: string;
   stock: number;
+  // Nota: La imagen se envía por separado como File en FormData
 }
 
 export interface ProductResponse {
@@ -1104,18 +1168,27 @@ curl -X POST http://localhost:8080/api/auth/login \
 curl http://localhost:8080/api/products?page=0&size=10
 ```
 
-### Crear Producto (con token)
+### Crear Producto con Imagen (con token)
 ```bash
 curl -X POST http://localhost:8080/api/products \
-  -H "Content-Type: application/json" \
   -H "Authorization: Bearer TU_TOKEN_AQUI" \
-  -d '{
-    "name": "Producto Test",
-    "description": "Descripción",
-    "price": 100.00,
-    "category": "Test",
-    "stock": 10
-  }'
+  -F 'product={"name":"Producto Test","description":"Descripción","price":100.00,"category":"Test","stock":10};type=application/json' \
+  -F 'image=@/ruta/a/tu/imagen.jpg'
+```
+
+### Actualizar Producto con Nueva Imagen (con token)
+```bash
+curl -X PUT http://localhost:8080/api/products/1 \
+  -H "Authorization: Bearer TU_TOKEN_AQUI" \
+  -F 'product={"name":"Producto Actualizado","description":"Nueva descripción","price":150.00,"category":"Test","stock":5};type=application/json' \
+  -F 'image=@/ruta/a/nueva-imagen.jpg'
+```
+
+### Actualizar Producto SIN Cambiar Imagen (con token)
+```bash
+curl -X PUT http://localhost:8080/api/products/1 \
+  -H "Authorization: Bearer TU_TOKEN_AQUI" \
+  -F 'product={"name":"Producto Actualizado","description":"Nueva descripción","price":150.00,"category":"Test","stock":5};type=application/json'
 ```
 
 ### Crear Pedido
