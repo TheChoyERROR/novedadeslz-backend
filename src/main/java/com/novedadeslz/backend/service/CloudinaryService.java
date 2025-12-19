@@ -51,11 +51,7 @@ public class CloudinaryService {
                     "public_id", publicId,
                     "folder", "novedadeslz/products",
                     "resource_type", "image",
-                    "overwrite", false,
-                    "transformation", ObjectUtils.asMap(
-                            "quality", "auto:good",
-                            "fetch_format", "auto"
-                    )
+                    "overwrite", false
             );
 
             // Subir a Cloudinary

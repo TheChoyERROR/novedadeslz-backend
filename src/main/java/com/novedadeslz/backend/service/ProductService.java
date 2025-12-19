@@ -5,6 +5,8 @@ import com.novedadeslz.backend.dto.response.ProductResponse;
 import com.novedadeslz.backend.exception.ResourceNotFoundException;
 import com.novedadeslz.backend.model.Product;
 import com.novedadeslz.backend.repository.ProductRepository;
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.Validator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.modelmapper.ModelMapper;
@@ -15,6 +17,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -24,9 +28,13 @@ public class ProductService {
     private final ProductRepository productRepository;
     private final ModelMapper modelMapper;
     private final CloudinaryService cloudinaryService;
+    private final Validator validator;
 
     @Transactional
     public ProductResponse createProduct(ProductRequest request, MultipartFile image) {
+        // Validar request manualmente
+        validateProductRequest(request);
+
         // Subir imagen a Cloudinary
         String imageUrl;
         try {
@@ -82,6 +90,9 @@ public class ProductService {
 
     @Transactional
     public ProductResponse updateProduct(Long id, ProductRequest request, MultipartFile image) {
+        // Validar request manualmente
+        validateProductRequest(request);
+
         Product product = productRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Producto no encontrado con ID: " + id));
 
@@ -138,5 +149,15 @@ public class ProductService {
         ProductResponse response = modelMapper.map(product, ProductResponse.class);
         response.setLowStock(product.isLowStock());
         return response;
+    }
+
+    private void validateProductRequest(ProductRequest request) {
+        Set<ConstraintViolation<ProductRequest>> violations = validator.validate(request);
+        if (!violations.isEmpty()) {
+            String errors = violations.stream()
+                    .map(ConstraintViolation::getMessage)
+                    .collect(Collectors.joining(", "));
+            throw new IllegalArgumentException("Errores de validación: " + errors);
+        }
     }
 }
