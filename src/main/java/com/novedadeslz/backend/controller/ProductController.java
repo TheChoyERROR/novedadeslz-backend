@@ -14,9 +14,11 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @RequestMapping("/api/products")
@@ -57,29 +59,31 @@ public class ProductController {
         return ResponseEntity.ok(ApiResponse.success(product));
     }
 
-    @PostMapping
+    @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasRole('ADMIN')")
     @SecurityRequirement(name = "bearerAuth")
-    @Operation(summary = "Crear nuevo producto (requiere ADMIN)")
+    @Operation(summary = "Crear nuevo producto con imagen (requiere ADMIN)")
     public ResponseEntity<ApiResponse<ProductResponse>> createProduct(
-            @Valid @RequestBody ProductRequest request) {
+            @Valid @RequestPart("product") ProductRequest request,
+            @RequestPart(value = "image", required = true) MultipartFile image) {
 
-        ProductResponse product = productService.createProduct(request);
+        ProductResponse product = productService.createProduct(request, image);
 
         return ResponseEntity
                 .status(HttpStatus.CREATED)
                 .body(ApiResponse.success("Producto creado exitosamente", product));
     }
 
-    @PutMapping("/{id}")
+    @PutMapping(value = "/{id}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasRole('ADMIN')")
     @SecurityRequirement(name = "bearerAuth")
-    @Operation(summary = "Actualizar producto (requiere ADMIN)")
+    @Operation(summary = "Actualizar producto con imagen opcional (requiere ADMIN)")
     public ResponseEntity<ApiResponse<ProductResponse>> updateProduct(
             @PathVariable Long id,
-            @Valid @RequestBody ProductRequest request) {
+            @Valid @RequestPart("product") ProductRequest request,
+            @RequestPart(value = "image", required = false) MultipartFile image) {
 
-        ProductResponse product = productService.updateProduct(id, request);
+        ProductResponse product = productService.updateProduct(id, request, image);
 
         return ResponseEntity.ok(
                 ApiResponse.success("Producto actualizado exitosamente", product)

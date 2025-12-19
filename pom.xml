@@ -130,6 +130,13 @@
 			<version>3.2.0</version>
 		</dependency>
 
+		<!-- Cloudinary para gestión de imágenes -->
+		<dependency>
+			<groupId>com.cloudinary</groupId>
+			<artifactId>cloudinary-http44</artifactId>
+			<version>1.38.0</version>
+		</dependency>
+
 		<!-- H2 Database para testing -->
 		<dependency>
 			<groupId>com.h2database</groupId>

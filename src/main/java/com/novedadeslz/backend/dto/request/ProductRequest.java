@@ -5,6 +5,11 @@ import lombok.Data;
 
 import java.math.BigDecimal;
 
+/**
+ * DTO para crear/actualizar productos
+ * Nota: La imagen se envía como MultipartFile en el controller,
+ * este DTO solo contiene los datos textuales del producto
+ */
 @Data
 public class ProductRequest {
 
@@ -19,9 +24,6 @@ public class ProductRequest {
     @DecimalMin(value = "0.01", message = "El precio debe ser mayor a 0")
     @Digits(integer = 8, fraction = 2, message = "Formato de precio inválido")
     private BigDecimal price;
-
-    @Size(max = 500, message = "La URL de la imagen es muy larga")
-    private String imageUrl;
 
     @NotBlank(message = "La categoría es obligatoria")
     @Size(max = 100, message = "La categoría no puede exceder 100 caracteres")
