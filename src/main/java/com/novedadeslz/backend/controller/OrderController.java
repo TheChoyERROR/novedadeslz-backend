@@ -16,10 +16,13 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.Map;
 
@@ -102,6 +105,40 @@ public class OrderController {
 
         return ResponseEntity.ok(
                 ApiResponse.success("Pedido eliminado exitosamente", null)
+        );
+    }
+
+    @PostMapping(value = "/{id}/yape-proof", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @Operation(summary = "Subir comprobante de Yape y validar con OCR (público)")
+    public ResponseEntity<ApiResponse<OrderResponse>> uploadYapeProof(
+            @PathVariable Long id,
+            @RequestPart(value = "proof", required = true) MultipartFile proofImage) throws IOException {
+
+        OrderResponse order = orderService.uploadYapeProof(id, proofImage);
+
+        String message;
+        if (order.getStatus().equals("CONFIRMED")) {
+            message = "Comprobante validado exitosamente. Pedido confirmado automáticamente.";
+        } else {
+            message = "Comprobante subido. Requiere validación manual del administrador.";
+        }
+
+        return ResponseEntity.ok(ApiResponse.success(message, order));
+    }
+
+    @PostMapping("/{id}/validate-proof")
+    @PreAuthorize("hasRole('ADMIN')")
+    @SecurityRequirement(name = "bearerAuth")
+    @Operation(summary = "Validar comprobante manualmente (requiere ADMIN)")
+    public ResponseEntity<ApiResponse<OrderResponse>> validateProofManually(
+            @PathVariable Long id,
+            @RequestBody Map<String, String> request) {
+
+        String operationNumber = request.get("operationNumber");
+        OrderResponse order = orderService.validateYapeProofManually(id, operationNumber);
+
+        return ResponseEntity.ok(
+                ApiResponse.success("Comprobante validado manualmente. Pedido confirmado.", order)
         );
     }
 }
