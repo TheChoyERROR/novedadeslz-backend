@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -29,6 +30,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/orders")
 @RequiredArgsConstructor
+@Slf4j
 @Tag(name = "Pedidos", description = "Gestión de pedidos")
 public class OrderController {
 
@@ -38,6 +40,10 @@ public class OrderController {
     @Operation(summary = "Crear nuevo pedido (público)")
     public ResponseEntity<ApiResponse<OrderResponse>> createOrder(
             @Valid @RequestBody OrderRequest request) {
+
+        log.info("Recibido request de orden: customerName={}, customerPhone={}, items={}",
+                request.getCustomerName(), request.getCustomerPhone(),
+                request.getItems() != null ? request.getItems().size() : "null");
 
         OrderResponse order = orderService.createOrder(request);
 

@@ -14,8 +14,7 @@ public class OrderRequest {
     private String customerName;
 
     @NotBlank(message = "El teléfono es obligatorio")
-    @Pattern(regexp = "^\\+?51?9\\d{8}$",
-        message = "Formato de teléfono peruano inválido. Ej: +51987654321")
+    @Pattern(regexp = "^\\+?(51)?9\\d{8}$", message = "Formato de teléfono peruano inválido. Ej: 987654321 o +51987654321")
     private String customerPhone;
 
     @Email(message = "Email inválido")

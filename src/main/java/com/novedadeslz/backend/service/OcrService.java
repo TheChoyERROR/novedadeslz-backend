@@ -26,6 +26,12 @@ public class OcrService {
     @Value("${ocr.space.api-key}")
     private String ocrApiKey;
 
+    @Value("${yape.recipient.phone:939662630}")
+    private String expectedRecipientPhone;
+
+    @Value("${yape.recipient.name:Leslie Lopez}")
+    private String expectedRecipientName;
+
     private final RestTemplate restTemplate = new RestTemplate();
     private final ObjectMapper objectMapper;
 
@@ -175,20 +181,105 @@ public class OcrService {
         // 4. Detectar si contiene la palabra "Yape"
         result.setContainsYape(normalizedText.toLowerCase().contains("yape"));
 
-        // 5. Validar si se detectó información clave
+        // 5. Extraer teléfono del destinatario (9 dígitos empezando con 9)
+        Pattern recipientPhonePattern = Pattern.compile(
+                "(?:Para|Destinatario|A)\\s*:?\\s*.*?(9[0-9]{8})",
+                Pattern.CASE_INSENSITIVE);
+        Matcher recipientPhoneMatcher = recipientPhonePattern.matcher(normalizedText);
+        if (recipientPhoneMatcher.find()) {
+            result.setRecipientPhone(recipientPhoneMatcher.group(1));
+            log.info("Teléfono destinatario detectado: {}", result.getRecipientPhone());
+        } else {
+            // Buscar cualquier número de 9 dígitos que empiece con 9 (que no sea operación)
+            Pattern anyPhonePattern = Pattern.compile("\\b(9[0-9]{8})\\b");
+            Matcher anyPhoneMatcher = anyPhonePattern.matcher(normalizedText);
+            while (anyPhoneMatcher.find()) {
+                String phone = anyPhoneMatcher.group(1);
+                // Ignorar si ya se usó como número de operación
+                if (result.getOperationNumber() == null || !result.getOperationNumber().contains(phone)) {
+                    result.setRecipientPhone(phone);
+                    log.info("Teléfono detectado (sin contexto): {}", phone);
+                    break;
+                }
+            }
+        }
+
+        // 6. Extraer nombre del destinatario (buscar nombre después de "Para" o
+        // similar)
+        Pattern recipientNamePattern = Pattern.compile(
+                "(?:Para|Destinatario|A|Yapear a)\\s*:?\\s*([A-Za-záéíóúñÁÉÍÓÚÑ]+(?:\\s+[A-Za-záéíóúñÁÉÍÓÚÑ]+)*)",
+                Pattern.CASE_INSENSITIVE);
+        Matcher recipientNameMatcher = recipientNamePattern.matcher(normalizedText);
+        if (recipientNameMatcher.find()) {
+            result.setRecipientName(recipientNameMatcher.group(1).trim());
+            log.info("Nombre destinatario detectado: {}", result.getRecipientName());
+        }
+
+        // 7. Validar destinatario correcto
+        boolean recipientValid = validateRecipient(result);
+        result.setRecipientValid(recipientValid);
+
+        // 8. Validar si se detectó información clave
         result.setValid(
                 result.getOperationNumber() != null &&
                 result.getAmount() != null &&
                 result.getAmount().compareTo(BigDecimal.ZERO) > 0 &&
-                result.isContainsYape()
+                        result.isContainsYape() &&
+                        result.isRecipientValid()
         );
 
         if (!result.isValid()) {
-            log.warn("Comprobante inválido o incompleto. Operación: {}, Monto: {}, Contiene Yape: {}",
-                    result.getOperationNumber(), result.getAmount(), result.isContainsYape());
+            log.warn(
+                    "Comprobante inválido o incompleto. Operación: {}, Monto: {}, Contiene Yape: {}, Destinatario válido: {}",
+                    result.getOperationNumber(), result.getAmount(), result.isContainsYape(),
+                    result.isRecipientValid());
         }
 
         return result;
+    }
+
+    /**
+     * Valida que el destinatario del Yape sea el correcto
+     */
+    private boolean validateRecipient(YapeOcrResult result) {
+        boolean phoneValid = false;
+        boolean nameValid = false;
+
+        // Validar teléfono del destinatario
+        if (result.getRecipientPhone() != null) {
+            phoneValid = result.getRecipientPhone().equals(expectedRecipientPhone);
+            if (!phoneValid) {
+                log.warn("Teléfono destinatario incorrecto. Esperado: {}, Encontrado: {}",
+                        expectedRecipientPhone, result.getRecipientPhone());
+            }
+        }
+
+        // Validar nombre del destinatario (debe contener al menos las primeras letras)
+        if (result.getRecipientName() != null) {
+            String normalizedExpected = expectedRecipientName.toLowerCase().trim();
+            String normalizedFound = result.getRecipientName().toLowerCase().trim();
+
+            // Verificar si el nombre encontrado contiene las primeras palabras del esperado
+            String[] expectedWords = normalizedExpected.split("\\s+");
+            if (expectedWords.length > 0) {
+                // Verificar que al menos el primer nombre coincida
+                nameValid = normalizedFound.contains(expectedWords[0]);
+                if (!nameValid) {
+                    log.warn("Nombre destinatario incorrecto. Esperado que contenga: {}, Encontrado: {}",
+                            expectedWords[0], result.getRecipientName());
+                }
+            }
+        }
+
+        // El comprobante es válido si coincide el teléfono O el nombre (con cierta
+        // flexibilidad)
+        boolean isValid = phoneValid || nameValid;
+
+        if (!isValid && result.getRecipientPhone() == null && result.getRecipientName() == null) {
+            log.warn("No se pudo detectar información del destinatario en el comprobante");
+        }
+
+        return isValid;
     }
 
     /**
@@ -223,6 +314,9 @@ public class OcrService {
         private boolean containsYape;
         private boolean valid;
         private String rawText;
+        private String recipientPhone;
+        private String recipientName;
+        private boolean recipientValid;
 
         /**
          * Verifica si el monto coincide con el esperado (con margen de error de S/ 0.10)

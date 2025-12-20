@@ -232,60 +232,126 @@ public class OrderService {
         // 2. Analizar imagen con OCR
         OcrService.YapeOcrResult ocrResult = ocrService.analyzeYapeReceipt(proofImage);
 
-        log.info("Resultado OCR - Válido: {}, Número operación: {}, Monto: S/ {}",
-                ocrResult.isValid(), ocrResult.getOperationNumber(), ocrResult.getAmount());
+        log.info("Resultado OCR - Válido: {}, Número operación: {}, Monto: S/ {}, Destinatario válido: {}",
+                ocrResult.isValid(), ocrResult.getOperationNumber(), ocrResult.getAmount(),
+                ocrResult.isRecipientValid());
 
-        // 3. Validar resultado del OCR
-        if (!ocrResult.isValid()) {
-            order.setNotes("Comprobante subido pero no se pudo validar automáticamente. " +
-                    "Requiere validación manual. Texto extraído: " + ocrResult.getRawText());
-            log.warn("Comprobante no válido para orden {}. Requiere validación manual", order.getOrderNumber());
-        } else {
-            // 4. Validar número de operación único
-            if (order.getOperationNumber() != null) {
-                throw new BadRequestException("El número de operación ya fue registrado anteriormente");
-            }
+        // 3. VALIDACIÓN ESTRICTA - Rechazar inmediatamente si hay problemas críticos
 
-            orderRepository.findByOperationNumber(ocrResult.getOperationNumber())
-                    .ifPresent(existingOrder -> {
-                        throw new BadRequestException(
-                                "El número de operación " + ocrResult.getOperationNumber() +
-                                " ya fue usado en el pedido " + existingOrder.getOrderNumber()
-                        );
-                    });
+        // 3.1 Validar que contiene información de Yape
+        if (!ocrResult.isContainsYape()) {
+            throw new BadRequestException(
+                    "El comprobante no parece ser de Yape. Sube una captura válida del comprobante de Yape.");
+        }
 
-            // 5. Validar que el monto coincida
-            if (!ocrResult.matchesAmount(order.getTotal())) {
-                String message = String.format(
-                        "El monto del comprobante (S/ %s) no coincide con el total del pedido (S/ %s). " +
-                        "Diferencia: S/ %s. Requiere validación manual.",
-                        ocrResult.getAmount(),
-                        order.getTotal(),
-                        ocrResult.getAmount().subtract(order.getTotal()).abs()
-                );
-                order.setNotes(message);
-                log.warn(message);
-            } else {
-                // Todo OK - Guardar número de operación y confirmar pedido
-                order.setOperationNumber(ocrResult.getOperationNumber());
-                order.setStatus(Order.OrderStatus.CONFIRMED);
-                order.setNotes("Comprobante validado automáticamente. " +
-                        "Fecha/Hora: " + ocrResult.getDateTime());
+        // 3.2 Validar que se detectó el monto
+        if (ocrResult.getAmount() == null) {
+            throw new BadRequestException(
+                    "No se pudo detectar el monto en el comprobante. Asegúrate de que la imagen sea clara y muestre el monto completo.");
+        }
 
-                // Descontar stock automáticamente
-                for (OrderItem item : order.getItems()) {
-                    Product product = item.getProduct();
-                    product.decreaseStock(item.getQuantity());
-                    productRepository.save(product);
-                }
+        // 3.3 Validar que el monto coincide con el pedido
+        if (!ocrResult.matchesAmount(order.getTotal())) {
+            String errorMsg = String.format(
+                    "El monto del comprobante (S/ %s) no coincide con el total del pedido (S/ %s). " +
+                            "Debes yapear exactamente S/ %s.",
+                    ocrResult.getAmount(),
+                    order.getTotal(),
+                    order.getTotal());
+            throw new BadRequestException(errorMsg);
+        }
 
-                log.info("Pedido {} confirmado automáticamente. Número de operación: {}",
-                        order.getOrderNumber(), ocrResult.getOperationNumber());
+        // 3.4 Validar que se detectó el número de operación
+        if (ocrResult.getOperationNumber() == null) {
+            throw new BadRequestException(
+                    "No se pudo detectar el número de operación. Asegúrate de que la captura muestre el comprobante completo con el número de operación.");
+        }
+
+        // 3.5 Validar número de operación único
+        orderRepository.findByOperationNumber(ocrResult.getOperationNumber())
+                .ifPresent(existingOrder -> {
+                    throw new BadRequestException(
+                            "El número de operación " + ocrResult.getOperationNumber() +
+                                    " ya fue usado en otro pedido. No puedes reutilizar comprobantes.");
+                });
+
+        // 3.6 Validar fecha del comprobante (debe ser reciente - últimas 24 horas)
+        if (ocrResult.getDateTime() != null) {
+            if (!isDateRecent(ocrResult.getDateTime())) {
+                throw new BadRequestException(
+                        "El comprobante parece ser de una fecha anterior. Solo se aceptan comprobantes de las últimas 24 horas.");
             }
         }
 
+        // 3.7 Validar destinatario (Leslie Lopez - 939662630)
+        if (!ocrResult.isRecipientValid()) {
+            throw new BadRequestException(
+                    "El pago no fue dirigido a la cuenta correcta. " +
+                            "Debes yapear a Leslie Lopez (939662630).");
+        }
+
+        // 4. Todo OK - Confirmar pedido automáticamente
+        order.setOperationNumber(ocrResult.getOperationNumber());
+        order.setStatus(Order.OrderStatus.CONFIRMED);
+        order.setNotes("Comprobante validado automáticamente. Fecha/Hora: " + ocrResult.getDateTime());
+
+        // 5. Descontar stock automáticamente
+        for (OrderItem item : order.getItems()) {
+            Product product = item.getProduct();
+            product.decreaseStock(item.getQuantity());
+            productRepository.save(product);
+        }
+
+        log.info("Pedido {} confirmado automáticamente. Número de operación: {}",
+                order.getOrderNumber(), ocrResult.getOperationNumber());
+
         Order updatedOrder = orderRepository.save(order);
         return mapToResponse(updatedOrder);
+    }
+
+    /**
+     * Verifica si la fecha del comprobante es reciente (últimas 24 horas)
+     */
+    private boolean isDateRecent(String dateTimeStr) {
+        try {
+            // Patrones comunes de fecha en comprobantes Yape
+            String[] patterns = {
+                    "d/M/yyyy H:mm",
+                    "dd/MM/yyyy HH:mm",
+                    "d-M-yyyy H:mm",
+                    "dd-MM-yyyy HH:mm"
+            };
+
+            LocalDateTime proofDate = null;
+            for (String pattern : patterns) {
+                try {
+                    proofDate = LocalDateTime.parse(dateTimeStr, DateTimeFormatter.ofPattern(pattern));
+                    break;
+                } catch (Exception ignored) {
+                }
+            }
+
+            if (proofDate == null) {
+                log.warn("No se pudo parsear la fecha del comprobante: {}", dateTimeStr);
+                return true; // Si no podemos parsear, asumimos que es válida
+            }
+
+            LocalDateTime now = LocalDateTime.now();
+            LocalDateTime yesterday = now.minusHours(24);
+
+            // La fecha debe ser entre ayer y ahora (no puede ser del futuro)
+            boolean isRecent = proofDate.isAfter(yesterday) && proofDate.isBefore(now.plusMinutes(5));
+
+            if (!isRecent) {
+                log.warn("Fecha del comprobante fuera de rango. Fecha: {}, Rango válido: {} a {}",
+                        proofDate, yesterday, now);
+            }
+
+            return isRecent;
+        } catch (Exception e) {
+            log.warn("Error al validar fecha del comprobante: {}", e.getMessage());
+            return true; // En caso de error, asumimos válida
+        }
     }
 
     /**

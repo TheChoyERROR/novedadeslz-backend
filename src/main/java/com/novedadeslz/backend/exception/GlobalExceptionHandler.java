@@ -7,6 +7,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -26,6 +27,22 @@ public class GlobalExceptionHandler {
                         .success(false)
                         .message("Tipo de contenido no soportado: " + ex.getMessage()
                                 + ". Asegúrese de no enviar 'Content-Type: application/json' manualmente al subir archivos.")
+                        .build());
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiResponse<Void>> handleHttpMessageNotReadable(
+            HttpMessageNotReadableException ex) {
+        String message = "Error al leer el cuerpo de la solicitud JSON";
+        Throwable cause = ex.getCause();
+        if (cause != null) {
+            message += ": " + cause.getMessage();
+        }
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.<Void>builder()
+                        .success(false)
+                        .message(message)
                         .build());
     }
 
