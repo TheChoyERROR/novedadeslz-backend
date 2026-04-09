@@ -14,6 +14,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 @Service
 @RequiredArgsConstructor
@@ -110,5 +111,25 @@ public class UserService {
                 .phone(user.getPhone())
                 .role(user.getRole().name())
                 .build();
+    }
+
+    @Transactional
+    public User ensureAdminUser(String email, String rawPassword, String fullName, String phone, boolean resetPassword) {
+        User admin = userRepository.findByEmail(email)
+                .orElseGet(() -> User.builder()
+                        .email(email)
+                        .build());
+
+        boolean shouldUpdatePassword = resetPassword || !StringUtils.hasText(admin.getPasswordHash());
+        if (shouldUpdatePassword) {
+            admin.setPasswordHash(passwordEncoder.encode(rawPassword));
+        }
+
+        admin.setFullName(fullName);
+        admin.setPhone(phone);
+        admin.setRole(User.Role.ADMIN);
+        admin.setActive(true);
+
+        return userRepository.save(admin);
     }
 }

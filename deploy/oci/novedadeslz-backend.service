@@ -1,0 +1,15 @@
+[Unit]
+Description=Novedades LZ Backend
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/novedadeslz/backend
+EnvironmentFile=/opt/novedadeslz/backend/backend.env
+ExecStart=/usr/bin/java -jar /opt/novedadeslz/backend/novedadeslz-backend.jar
+SuccessExitStatus=143
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

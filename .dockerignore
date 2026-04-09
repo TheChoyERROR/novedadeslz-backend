@@ -1,0 +1,7 @@
+.git
+.mvn
+.vscode
+target
+uploads
+.env
+*.log
