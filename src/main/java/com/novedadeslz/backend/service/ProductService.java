@@ -19,6 +19,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -98,13 +99,28 @@ public class ProductService {
                 .orElseThrow(() -> new ResourceNotFoundException("Producto no encontrado con ID: " + id));
 
         List<String> previousImageUrls = product.getImageUrls();
+        List<String> keptImageUrls = resolveKeptImageUrls(previousImageUrls, request.getImageUrls());
         List<String> newImageUrls = List.of();
-        boolean replaceGallery = images != null && !images.isEmpty();
+        boolean hasNewImages = images != null && !images.isEmpty();
 
-        if (replaceGallery) {
-            newImageUrls = uploadImages(images, true);
-            product.setImageUrls(newImageUrls);
+        if (keptImageUrls.isEmpty() && !hasNewImages) {
+            throw new IllegalArgumentException("El producto debe conservar al menos una imagen");
         }
+
+        if (keptImageUrls.size() + countValidImages(images) > MAX_PRODUCT_IMAGES) {
+            throw new IllegalArgumentException(
+                    "Solo se permiten hasta " + MAX_PRODUCT_IMAGES + " imagenes por producto"
+            );
+        }
+
+        if (hasNewImages) {
+            newImageUrls = uploadImages(images, false);
+        }
+
+        List<String> finalImageUrls = new ArrayList<>(keptImageUrls);
+        finalImageUrls.addAll(newImageUrls);
+        ensureImageGalleryFitsStorage(finalImageUrls);
+        product.setImageUrls(finalImageUrls);
 
         product.setName(request.getName());
         product.setDescription(request.getDescription());
@@ -115,13 +131,13 @@ public class ProductService {
         try {
             Product updatedProduct = productRepository.save(product);
 
-            if (replaceGallery) {
-                deleteImages(previousImageUrls);
-            }
+            deleteImages(previousImageUrls.stream()
+                    .filter(previousUrl -> !keptImageUrls.contains(previousUrl))
+                    .toList());
 
             return mapToResponse(updatedProduct);
         } catch (RuntimeException e) {
-            if (replaceGallery) {
+            if (hasNewImages) {
                 deleteImages(newImageUrls);
             }
             throw e;
@@ -191,6 +207,37 @@ public class ProductService {
             deleteImages(uploadedImageUrls);
             throw e;
         }
+    }
+
+    private int countValidImages(List<MultipartFile> images) {
+        return images == null
+                ? 0
+                : (int) images.stream()
+                        .filter(Objects::nonNull)
+                        .filter(image -> !image.isEmpty())
+                        .count();
+    }
+
+    private List<String> resolveKeptImageUrls(List<String> previousImageUrls, List<String> requestedImageUrls) {
+        if (requestedImageUrls == null) {
+            return previousImageUrls;
+        }
+
+        List<String> sanitizedRequestedUrls = requestedImageUrls.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(url -> !url.isEmpty())
+                .distinct()
+                .toList();
+
+        boolean hasUnknownUrl = sanitizedRequestedUrls.stream()
+                .anyMatch(url -> !previousImageUrls.contains(url));
+
+        if (hasUnknownUrl) {
+            throw new IllegalArgumentException("Se enviaron imagenes existentes invalidas para el producto");
+        }
+
+        return sanitizedRequestedUrls;
     }
 
     private void deleteImages(List<String> imageUrls) {

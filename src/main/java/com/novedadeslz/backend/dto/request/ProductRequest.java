@@ -4,6 +4,7 @@ import jakarta.validation.constraints.*;
 import lombok.Data;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 /**
  * DTO para crear/actualizar productos
@@ -32,4 +33,10 @@ public class ProductRequest {
     @NotNull(message = "El stock es obligatorio")
     @Min(value = 0, message = "El stock no puede ser negativo")
     private Integer stock;
+
+    /**
+     * URLs existentes que se conservaran al actualizar el producto.
+     * Si no se envian en update, se asume que se mantienen todas las actuales.
+     */
+    private List<String> imageUrls;
 }
