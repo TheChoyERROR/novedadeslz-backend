@@ -116,13 +116,6 @@
 			<version>2.7.0</version>
 		</dependency>
 
-		<!-- Apache HttpClient para OCR.space -->
-		<dependency>
-			<groupId>org.apache.httpcomponents.client5</groupId>
-			<artifactId>httpclient5</artifactId>
-			<version>5.3.1</version>
-		</dependency>
-
 		<!-- ModelMapper -->
 		<dependency>
 			<groupId>org.modelmapper</groupId>
@@ -137,11 +130,11 @@
 			<version>1.38.0</version>
 		</dependency>
 
-		<!-- H2 Database para testing -->
+		<!-- H2 Database para entornos locales y testing -->
 		<dependency>
 			<groupId>com.h2database</groupId>
 			<artifactId>h2</artifactId>
-			<scope>test</scope>
+			<scope>runtime</scope>
 		</dependency>
 	</dependencies>
 

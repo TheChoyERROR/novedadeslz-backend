@@ -1,0 +1,2 @@
+-- Seed local intencionalmente vacio.
+-- El admin local se crea desde LocalAdminInitializer.

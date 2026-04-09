@@ -26,8 +26,8 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
     Optional<Order> findByOperationNumber(String operationNumber);
 
-    @Query("SELECT COUNT(o) FROM Order o WHERE o.orderNumber LIKE :prefix%")
-    Long countByOrderNumberStartingWith(@Param("prefix") String prefix);
+    @Query(value = "SELECT COUNT(*) FROM orders o WHERE o.order_number LIKE :pattern", nativeQuery = true)
+    Long countByOrderNumberStartingWith(@Param("pattern") String pattern);
 
     @Query("SELECT o FROM Order o WHERE o.status = :status AND o.createdAt >= :date")
     Page<Order> findRecentOrdersByStatus(

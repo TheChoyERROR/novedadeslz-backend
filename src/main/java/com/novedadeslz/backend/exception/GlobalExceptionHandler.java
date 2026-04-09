@@ -5,6 +5,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -143,6 +144,17 @@ public class GlobalExceptionHandler {
                 .build());
     }
 
+    @ExceptionHandler(CannotCreateTransactionException.class)
+    public ResponseEntity<ApiResponse<Void>> handleDatabaseConnectionError(
+            CannotCreateTransactionException ex) {
+        return ResponseEntity
+                .status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(ApiResponse.<Void>builder()
+                        .success(false)
+                        .message(buildDatabaseConnectionMessage(ex))
+                        .build());
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleGenericException(
             Exception ex) {
@@ -153,5 +165,19 @@ public class GlobalExceptionHandler {
                 .success(false)
                         .message("Error interno del servidor: " + ex.getMessage())
                 .build());
+    }
+
+    private String buildDatabaseConnectionMessage(Throwable ex) {
+        Throwable rootCause = ex;
+        while (rootCause.getCause() != null && rootCause.getCause() != rootCause) {
+            rootCause = rootCause.getCause();
+        }
+
+        String rootMessage = rootCause.getMessage();
+
+        return "No se pudo abrir la conexion con la base de datos. "
+                + "Si estas trabajando en local, inicia el backend con el perfil 'local' "
+                + "(H2) o configura Oracle en DB_URL, DB_USERNAME y DB_PASSWORD. "
+                + (rootMessage != null ? "Detalle: " + rootMessage : "");
     }
 }

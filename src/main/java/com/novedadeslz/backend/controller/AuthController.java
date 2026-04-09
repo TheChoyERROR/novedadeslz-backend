@@ -6,11 +6,14 @@ import com.novedadeslz.backend.dto.response.ApiResponse;
 import com.novedadeslz.backend.dto.response.AuthResponse;
 import com.novedadeslz.backend.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -43,5 +46,16 @@ public class AuthController {
         return ResponseEntity.ok(
                 ApiResponse.success("Login exitoso", response)
         );
+    }
+
+    @GetMapping("/me")
+    @PreAuthorize("isAuthenticated()")
+    @SecurityRequirement(name = "bearerAuth")
+    @Operation(summary = "Obtener usuario autenticado")
+    public ResponseEntity<ApiResponse<AuthResponse.UserResponse>> getCurrentUser(
+            Authentication authentication) {
+
+        AuthResponse.UserResponse response = userService.getCurrentUser(authentication.getName());
+        return ResponseEntity.ok(ApiResponse.success(response));
     }
 }

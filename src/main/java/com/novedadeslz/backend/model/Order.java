@@ -82,6 +82,8 @@ public class Order {
 
     public enum OrderStatus {
         PENDING,
+        PAYMENT_REVIEW,
+        PAYMENT_REJECTED,
         CONFIRMED,
         DELIVERED,
         CANCELLED

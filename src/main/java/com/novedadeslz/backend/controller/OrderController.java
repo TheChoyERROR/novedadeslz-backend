@@ -1,5 +1,6 @@
 package com.novedadeslz.backend.controller;
 
+import com.novedadeslz.backend.dto.request.OrderPaymentReviewRequest;
 import com.novedadeslz.backend.dto.request.OrderRequest;
 import com.novedadeslz.backend.dto.response.ApiResponse;
 import com.novedadeslz.backend.dto.response.OrderResponse;
@@ -20,7 +21,16 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
@@ -31,13 +41,13 @@ import java.util.Map;
 @RequestMapping("/api/orders")
 @RequiredArgsConstructor
 @Slf4j
-@Tag(name = "Pedidos", description = "Gestión de pedidos")
+@Tag(name = "Pedidos", description = "Gestion de pedidos")
 public class OrderController {
 
     private final OrderService orderService;
 
     @PostMapping
-    @Operation(summary = "Crear nuevo pedido (público)")
+    @Operation(summary = "Crear nuevo pedido (publico)")
     public ResponseEntity<ApiResponse<OrderResponse>> createOrder(
             @Valid @RequestBody OrderRequest request) {
 
@@ -80,7 +90,7 @@ public class OrderController {
     }
 
     @GetMapping("/{id}")
-    @Operation(summary = "Obtener pedido por ID (público)")
+    @Operation(summary = "Obtener pedido por ID (publico)")
     public ResponseEntity<ApiResponse<OrderResponse>> getOrderById(@PathVariable Long id) {
         OrderResponse order = orderService.getOrderById(id);
         return ResponseEntity.ok(ApiResponse.success(order));
@@ -115,21 +125,17 @@ public class OrderController {
     }
 
     @PostMapping(value = "/{id}/yape-proof", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @Operation(summary = "Subir comprobante de Yape y validar con OCR (público)")
+    @Operation(summary = "Subir comprobante de Yape para revision (publico)")
     public ResponseEntity<ApiResponse<OrderResponse>> uploadYapeProof(
             @PathVariable Long id,
             @RequestPart(value = "proof", required = true) MultipartFile proofImage) throws IOException {
 
         OrderResponse order = orderService.uploadYapeProof(id, proofImage);
 
-        String message;
-        if (order.getStatus().equals("CONFIRMED")) {
-            message = "Comprobante validado exitosamente. Pedido confirmado automáticamente.";
-        } else {
-            message = "Comprobante subido. Requiere validación manual del administrador.";
-        }
-
-        return ResponseEntity.ok(ApiResponse.success(message, order));
+        return ResponseEntity.ok(ApiResponse.success(
+                "Comprobante subido correctamente. Quedo pendiente de revision del administrador.",
+                order
+        ));
     }
 
     @PostMapping("/{id}/validate-proof")
@@ -145,6 +151,39 @@ public class OrderController {
 
         return ResponseEntity.ok(
                 ApiResponse.success("Comprobante validado manualmente. Pedido confirmado.", order)
+        );
+    }
+
+    @PostMapping("/{id}/approve-payment")
+    @PreAuthorize("hasRole('ADMIN')")
+    @SecurityRequirement(name = "bearerAuth")
+    @Operation(summary = "Aprobar pago y confirmar pedido (requiere ADMIN)")
+    public ResponseEntity<ApiResponse<OrderResponse>> approvePayment(
+            @PathVariable Long id,
+            @RequestBody(required = false) OrderPaymentReviewRequest request) {
+
+        OrderResponse order = orderService.approveOrderPayment(
+                id,
+                request != null ? request : new OrderPaymentReviewRequest()
+        );
+
+        return ResponseEntity.ok(
+                ApiResponse.success("Pago aprobado. Pedido confirmado.", order)
+        );
+    }
+
+    @PostMapping("/{id}/reject-payment")
+    @PreAuthorize("hasRole('ADMIN')")
+    @SecurityRequirement(name = "bearerAuth")
+    @Operation(summary = "Rechazar pago y solicitar nuevo comprobante (requiere ADMIN)")
+    public ResponseEntity<ApiResponse<OrderResponse>> rejectPayment(
+            @PathVariable Long id,
+            @RequestBody OrderPaymentReviewRequest request) {
+
+        OrderResponse order = orderService.rejectOrderPayment(id, request);
+
+        return ResponseEntity.ok(
+                ApiResponse.success("Pago rechazado. El cliente debe reenviar su comprobante.", order)
         );
     }
 }

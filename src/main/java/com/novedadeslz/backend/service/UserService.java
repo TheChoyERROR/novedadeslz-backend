@@ -37,7 +37,7 @@ public class UserService {
                 .passwordHash(passwordEncoder.encode(request.getPassword()))
                 .fullName(request.getFullName())
                 .phone(request.getPhone())
-                .role(User.Role.ADMIN)
+                .role(User.Role.USER)
                 .active(true)
                 .build();
 
@@ -95,6 +95,20 @@ public class UserService {
                         .phone(user.getPhone())
                         .role(user.getRole().name())
                         .build())
+                .build();
+    }
+
+    @Transactional(readOnly = true)
+    public AuthResponse.UserResponse getCurrentUser(String email) {
+        User user = userRepository.findByEmailAndActiveTrue(email)
+                .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
+
+        return AuthResponse.UserResponse.builder()
+                .id(user.getId())
+                .email(user.getEmail())
+                .fullName(user.getFullName())
+                .phone(user.getPhone())
+                .role(user.getRole().name())
                 .build();
     }
 }

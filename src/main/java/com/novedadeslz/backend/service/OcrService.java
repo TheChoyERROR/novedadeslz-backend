@@ -23,7 +23,7 @@ import java.util.regex.Pattern;
 @Slf4j
 public class OcrService {
 
-    @Value("${ocr.space.api-key}")
+    @Value("${ocr.space.api-key:}")
     private String ocrApiKey;
 
     @Value("${yape.recipient.phone:939662630}")
