@@ -17,6 +17,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -25,38 +27,38 @@ import java.util.stream.Collectors;
 @Slf4j
 public class ProductService {
 
+    private static final int MAX_PRODUCT_IMAGES = 3;
+    private static final int MAX_IMAGE_URL_STORAGE_LENGTH = 500;
+
     private final ProductRepository productRepository;
     private final ModelMapper modelMapper;
     private final CloudinaryService cloudinaryService;
     private final Validator validator;
 
     @Transactional
-    public ProductResponse createProduct(ProductRequest request, MultipartFile image) {
-        // Validar request manualmente
+    public ProductResponse createProduct(ProductRequest request, List<MultipartFile> images) {
         validateProductRequest(request);
 
-        // Subir imagen a Cloudinary
-        String imageUrl;
+        List<String> imageUrls = uploadImages(images, true);
+
         try {
-            imageUrl = cloudinaryService.uploadImage(image);
-        } catch (IOException e) {
-            log.error("Error al subir imagen a Cloudinary: {}", e.getMessage());
-            throw new RuntimeException("Error al subir la imagen: " + e.getMessage(), e);
+            Product product = Product.builder()
+                    .name(request.getName())
+                    .description(request.getDescription())
+                    .price(request.getPrice())
+                    .category(request.getCategory())
+                    .stock(request.getStock())
+                    .active(true)
+                    .build();
+
+            product.setImageUrls(imageUrls);
+
+            Product savedProduct = productRepository.save(product);
+            return mapToResponse(savedProduct);
+        } catch (RuntimeException e) {
+            deleteImages(imageUrls);
+            throw e;
         }
-
-        // Crear producto con la URL de Cloudinary
-        Product product = Product.builder()
-                .name(request.getName())
-                .description(request.getDescription())
-                .price(request.getPrice())
-                .imageUrl(imageUrl)
-                .category(request.getCategory())
-                .stock(request.getStock())
-                .active(true)
-                .build();
-
-        Product savedProduct = productRepository.save(product);
-        return mapToResponse(savedProduct);
     }
 
     @Transactional(readOnly = true)
@@ -89,40 +91,41 @@ public class ProductService {
     }
 
     @Transactional
-    public ProductResponse updateProduct(Long id, ProductRequest request, MultipartFile image) {
-        // Validar request manualmente
+    public ProductResponse updateProduct(Long id, ProductRequest request, List<MultipartFile> images) {
         validateProductRequest(request);
 
         Product product = productRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Producto no encontrado con ID: " + id));
 
-        // Si se proporciona nueva imagen, subir a Cloudinary y eliminar la anterior
-        if (image != null && !image.isEmpty()) {
-            try {
-                // Eliminar imagen anterior de Cloudinary
-                if (product.getImageUrl() != null && !product.getImageUrl().isEmpty()) {
-                    cloudinaryService.deleteImage(product.getImageUrl());
-                }
+        List<String> previousImageUrls = product.getImageUrls();
+        List<String> newImageUrls = List.of();
+        boolean replaceGallery = images != null && !images.isEmpty();
 
-                // Subir nueva imagen
-                String newImageUrl = cloudinaryService.uploadImage(image);
-                product.setImageUrl(newImageUrl);
-
-            } catch (IOException e) {
-                log.error("Error al actualizar imagen en Cloudinary: {}", e.getMessage());
-                throw new RuntimeException("Error al actualizar la imagen: " + e.getMessage(), e);
-            }
+        if (replaceGallery) {
+            newImageUrls = uploadImages(images, true);
+            product.setImageUrls(newImageUrls);
         }
 
-        // Actualizar demás campos
         product.setName(request.getName());
         product.setDescription(request.getDescription());
         product.setPrice(request.getPrice());
         product.setCategory(request.getCategory());
         product.setStock(request.getStock());
 
-        Product updatedProduct = productRepository.save(product);
-        return mapToResponse(updatedProduct);
+        try {
+            Product updatedProduct = productRepository.save(product);
+
+            if (replaceGallery) {
+                deleteImages(previousImageUrls);
+            }
+
+            return mapToResponse(updatedProduct);
+        } catch (RuntimeException e) {
+            if (replaceGallery) {
+                deleteImages(newImageUrls);
+            }
+            throw e;
+        }
     }
 
     @Transactional
@@ -130,23 +133,16 @@ public class ProductService {
         Product product = productRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Producto no encontrado con ID: " + id));
 
-        // Eliminar imagen de Cloudinary (opcional, puedes comentar si prefieres mantener las imágenes)
-        if (product.getImageUrl() != null && !product.getImageUrl().isEmpty()) {
-            boolean deleted = cloudinaryService.deleteImage(product.getImageUrl());
-            if (deleted) {
-                log.info("Imagen eliminada de Cloudinary para producto ID: {}", id);
-            } else {
-                log.warn("No se pudo eliminar la imagen de Cloudinary para producto ID: {}", id);
-            }
-        }
+        deleteImages(product.getImageUrls());
 
-        // Soft delete
         product.setActive(false);
         productRepository.save(product);
     }
 
     private ProductResponse mapToResponse(Product product) {
         ProductResponse response = modelMapper.map(product, ProductResponse.class);
+        response.setImageUrl(product.getImageUrl());
+        response.setImageUrls(product.getImageUrls());
         response.setLowStock(product.isLowStock());
         return response;
     }
@@ -157,7 +153,68 @@ public class ProductService {
             String errors = violations.stream()
                     .map(ConstraintViolation::getMessage)
                     .collect(Collectors.joining(", "));
-            throw new IllegalArgumentException("Errores de validación: " + errors);
+            throw new IllegalArgumentException("Errores de validacion: " + errors);
+        }
+    }
+
+    private List<String> uploadImages(List<MultipartFile> images, boolean required) {
+        List<MultipartFile> validImages = images == null
+                ? List.of()
+                : images.stream()
+                        .filter(image -> image != null && !image.isEmpty())
+                        .toList();
+
+        if (required && validImages.isEmpty()) {
+            throw new IllegalArgumentException("Selecciona al menos una imagen para el producto");
+        }
+
+        if (validImages.size() > MAX_PRODUCT_IMAGES) {
+            throw new IllegalArgumentException(
+                    "Solo se permiten hasta " + MAX_PRODUCT_IMAGES + " imagenes por producto"
+            );
+        }
+
+        List<String> uploadedImageUrls = new ArrayList<>();
+
+        try {
+            for (MultipartFile image : validImages) {
+                uploadedImageUrls.add(cloudinaryService.uploadImage(image));
+                ensureImageGalleryFitsStorage(uploadedImageUrls);
+            }
+
+            return List.copyOf(uploadedImageUrls);
+        } catch (IOException e) {
+            deleteImages(uploadedImageUrls);
+            log.error("Error al subir imagenes a Cloudinary: {}", e.getMessage());
+            throw new RuntimeException("Error al subir las imagenes: " + e.getMessage(), e);
+        } catch (RuntimeException e) {
+            deleteImages(uploadedImageUrls);
+            throw e;
+        }
+    }
+
+    private void deleteImages(List<String> imageUrls) {
+        if (imageUrls == null || imageUrls.isEmpty()) {
+            return;
+        }
+
+        imageUrls.forEach(imageUrl -> {
+            boolean deleted = cloudinaryService.deleteImage(imageUrl);
+            if (deleted) {
+                log.info("Imagen eliminada del almacenamiento: {}", imageUrl);
+            } else {
+                log.warn("No se pudo eliminar la imagen del almacenamiento: {}", imageUrl);
+            }
+        });
+    }
+
+    private void ensureImageGalleryFitsStorage(List<String> imageUrls) {
+        String serializedImageUrls = String.join("|", imageUrls);
+        if (serializedImageUrls.length() > MAX_IMAGE_URL_STORAGE_LENGTH) {
+            throw new IllegalArgumentException(
+                    "Las imagenes exceden el espacio disponible del producto. Usa hasta "
+                            + MAX_PRODUCT_IMAGES + " imagenes cortas por ahora."
+            );
         }
     }
 }

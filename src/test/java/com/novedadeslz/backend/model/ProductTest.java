@@ -1,0 +1,56 @@
+package com.novedadeslz.backend.model;
+
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertIterableEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+
+class ProductTest {
+
+    @Test
+    void imageUrlSetterShouldKeepBackwardCompatibility() {
+        Product product = new Product();
+
+        product.setImageUrl("https://cdn.example.com/producto-1.jpg");
+
+        assertEquals("https://cdn.example.com/producto-1.jpg", product.getImageUrl());
+        assertIterableEquals(
+                List.of("https://cdn.example.com/producto-1.jpg"),
+                product.getImageUrls()
+        );
+    }
+
+    @Test
+    void imageUrlsSetterShouldExposeCoverAndGallery() {
+        Product product = new Product();
+
+        product.setImageUrls(List.of(
+                "https://cdn.example.com/producto-1.jpg",
+                "https://cdn.example.com/producto-2.jpg",
+                "https://cdn.example.com/producto-3.jpg"
+        ));
+
+        assertEquals("https://cdn.example.com/producto-1.jpg", product.getImageUrl());
+        assertIterableEquals(
+                List.of(
+                        "https://cdn.example.com/producto-1.jpg",
+                        "https://cdn.example.com/producto-2.jpg",
+                        "https://cdn.example.com/producto-3.jpg"
+                ),
+                product.getImageUrls()
+        );
+    }
+
+    @Test
+    void emptyGalleryShouldClearStoredImageData() {
+        Product product = new Product();
+
+        product.setImageUrls(List.of());
+
+        assertNull(product.getImageUrl());
+        assertIterableEquals(List.of(), product.getImageUrls());
+    }
+}

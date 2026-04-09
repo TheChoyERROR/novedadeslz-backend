@@ -7,6 +7,7 @@ import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 @Builder
@@ -19,6 +20,7 @@ public class ProductResponse {
     private String description;
     private BigDecimal price;
     private String imageUrl;
+    private List<String> imageUrls;
     private String category;
     private Integer stock;
     private Boolean active;

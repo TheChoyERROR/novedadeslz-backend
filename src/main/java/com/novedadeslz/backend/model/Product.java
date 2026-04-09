@@ -7,6 +7,11 @@ import org.hibernate.annotations.UpdateTimestamp;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Objects;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 @Entity
 @Table(name = "products")
@@ -16,6 +21,8 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Builder
 public class Product {
+
+    private static final String IMAGE_URL_SEPARATOR = "|";
 
     @Id
     @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "product_seq")
@@ -32,6 +39,8 @@ public class Product {
     private BigDecimal price;
 
     @Column(name = "image_url", length = 500)
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
     private String imageUrl;
 
     @Column(length = 100)
@@ -69,5 +78,38 @@ public class Product {
 
     public boolean isLowStock() {
         return this.stock <= 5;
+    }
+
+    public String getImageUrl() {
+        return getImageUrls().stream().findFirst().orElse(null);
+    }
+
+    public void setImageUrl(String imageUrl) {
+        setImageUrls(imageUrl == null || imageUrl.isBlank() ? List.of() : List.of(imageUrl));
+    }
+
+    public List<String> getImageUrls() {
+        if (imageUrl == null || imageUrl.isBlank()) {
+            return List.of();
+        }
+
+        return Arrays.stream(imageUrl.split(Pattern.quote(IMAGE_URL_SEPARATOR)))
+                .map(String::trim)
+                .filter(value -> !value.isEmpty())
+                .toList();
+    }
+
+    public void setImageUrls(List<String> imageUrls) {
+        List<String> sanitizedImageUrls = imageUrls == null
+                ? List.of()
+                : imageUrls.stream()
+                        .filter(Objects::nonNull)
+                        .map(String::trim)
+                        .filter(value -> !value.isEmpty())
+                        .toList();
+
+        this.imageUrl = sanitizedImageUrls.isEmpty()
+                ? null
+                : sanitizedImageUrls.stream().collect(Collectors.joining(IMAGE_URL_SEPARATOR));
     }
 }
