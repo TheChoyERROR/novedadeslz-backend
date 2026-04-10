@@ -2,8 +2,10 @@ package com.novedadeslz.backend.model;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.type.SqlTypes;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -65,7 +67,8 @@ public class Order {
     @Builder.Default
     private Boolean whatsappSent = false;
 
-    @Column(columnDefinition = "CLOB")
+    @JdbcTypeCode(SqlTypes.LONGVARCHAR)
+    @Column
     private String notes;
 
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
