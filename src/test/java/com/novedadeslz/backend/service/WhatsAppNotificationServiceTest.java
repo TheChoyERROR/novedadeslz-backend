@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
+import com.novedadeslz.backend.security.JwtTokenProvider;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestTemplate;
@@ -22,7 +23,7 @@ class WhatsAppNotificationServiceTest {
 
     @Test
     void sendAdminTestMessageShouldPostToTwilioWhenConfigured() {
-        WhatsAppNotificationService service = new WhatsAppNotificationService();
+        WhatsAppNotificationService service = new WhatsAppNotificationService(new JwtTokenProvider());
         RestTemplate restTemplate = (RestTemplate) ReflectionTestUtils.getField(service, "restTemplate");
         MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
 
@@ -51,7 +52,7 @@ class WhatsAppNotificationServiceTest {
 
     @Test
     void sendAdminTestMessageShouldReturnFalseWhenNotificationsDisabled() {
-        WhatsAppNotificationService service = new WhatsAppNotificationService();
+        WhatsAppNotificationService service = new WhatsAppNotificationService(new JwtTokenProvider());
         ReflectionTestUtils.setField(service, "notificationsEnabled", false);
 
         boolean sent = service.sendAdminTestMessage();

@@ -45,6 +45,7 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/products/**").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/orders").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/orders/{id}").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/orders/*/approve-from-whatsapp").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/orders/{id}/yape-proof").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/payments/validate-yape").permitAll()
 

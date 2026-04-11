@@ -20,6 +20,9 @@ public class JwtTokenProvider {
     @Value("${jwt.expiration:86400000}") // 24 horas en ms
     private long jwtExpirationMs;
 
+    @Value("${app.whatsapp-approval-link-expiration-minutes:20}")
+    private long whatsappApprovalLinkExpirationMinutes;
+
     private SecretKey getSigningKey() {
         return Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
     }
@@ -36,6 +39,41 @@ public class JwtTokenProvider {
             .setExpiration(expiryDate)
             .signWith(getSigningKey(), SignatureAlgorithm.HS512)
             .compact();
+    }
+
+    public String generateWhatsAppApprovalToken(Long orderId) {
+        Date now = new Date();
+        Date expiryDate = new Date(now.getTime() + (whatsappApprovalLinkExpirationMinutes * 60_000));
+
+        return Jwts.builder()
+                .setSubject("whatsapp-approval")
+                .claim("action", "approve-payment")
+                .claim("orderId", orderId)
+                .setIssuedAt(now)
+                .setExpiration(expiryDate)
+                .signWith(getSigningKey(), SignatureAlgorithm.HS512)
+                .compact();
+    }
+
+    public boolean validateWhatsAppApprovalToken(String token, Long expectedOrderId) {
+        try {
+            Claims claims = Jwts.parser()
+                    .verifyWith(getSigningKey())
+                    .build()
+                    .parseSignedClaims(token)
+                    .getPayload();
+
+            String subject = claims.getSubject();
+            String action = claims.get("action", String.class);
+            Number orderIdClaim = claims.get("orderId", Number.class);
+
+            return "whatsapp-approval".equals(subject) &&
+                    "approve-payment".equals(action) &&
+                    orderIdClaim != null &&
+                    expectedOrderId.equals(orderIdClaim.longValue());
+        } catch (JwtException | IllegalArgumentException ex) {
+            return false;
+        }
     }
 
     public String getUsernameFromToken(String token) {
@@ -71,5 +109,9 @@ public class JwtTokenProvider {
 
     public long getExpirationMs() {
         return jwtExpirationMs;
+    }
+
+    public long getWhatsAppApprovalLinkExpirationMinutes() {
+        return whatsappApprovalLinkExpirationMinutes;
     }
 }

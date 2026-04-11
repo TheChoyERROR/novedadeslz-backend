@@ -237,6 +237,29 @@ public class OrderService {
     }
 
     @Transactional
+    public OrderResponse approveOrderPaymentFromWhatsApp(Long orderId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Pedido no encontrado con ID: " + orderId));
+
+        if (order.getStatus() != Order.OrderStatus.PAYMENT_REVIEW) {
+            throw new BadRequestException("El pedido ya no esta pendiente de revision");
+        }
+
+        Order.OrderStatus oldStatus = order.getStatus();
+        order.setStatus(Order.OrderStatus.CONFIRMED);
+        applyStockRules(order, oldStatus, Order.OrderStatus.CONFIRMED);
+        appendNote(order, "Pago aprobado desde enlace seguro de WhatsApp.");
+
+        if (!StringUtils.hasText(order.getOperationNumber())) {
+            appendNote(order, "Aprobacion realizada sin numero de operacion confirmado por OCR.");
+        }
+
+        Order updatedOrder = orderRepository.save(order);
+        log.info("Pedido {} aprobado desde enlace seguro de WhatsApp", order.getOrderNumber());
+        return mapToResponse(updatedOrder, true);
+    }
+
+    @Transactional
     public OrderResponse rejectOrderPayment(Long orderId, OrderPaymentReviewRequest request) {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new ResourceNotFoundException("Pedido no encontrado con ID: " + orderId));

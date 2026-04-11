@@ -1,6 +1,8 @@
 package com.novedadeslz.backend.service;
 
 import com.novedadeslz.backend.model.Order;
+import com.novedadeslz.backend.security.JwtTokenProvider;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
@@ -15,6 +17,7 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -24,7 +27,10 @@ import java.util.Locale;
 
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class WhatsAppNotificationService {
+
+    private final JwtTokenProvider jwtTokenProvider;
 
     @Value("${whatsapp.notifications.enabled:true}")
     private boolean notificationsEnabled;
@@ -61,6 +67,9 @@ public class WhatsAppNotificationService {
 
     @Value("${app.admin-orders-url:http://localhost:3000/admin/orders}")
     private String adminOrdersUrl;
+
+    @Value("${app.public-base-url:http://localhost:8080}")
+    private String publicBaseUrl;
 
     private final RestTemplate restTemplate = new RestTemplate();
 
@@ -232,6 +241,7 @@ public class WhatsAppNotificationService {
                 "Total: S/ " + order.getTotal(),
                 "Operacion OCR: " + operationNumber,
                 StringUtils.hasText(order.getPaymentProof()) ? "Comprobante: " + order.getPaymentProof() : "Comprobante: adjunto en panel admin",
+                "Aprobar ahora (" + jwtTokenProvider.getWhatsAppApprovalLinkExpirationMinutes() + " min): " + buildApprovalLink(order),
                 "Panel admin: " + normalizeAdminOrdersUrl()
         );
     }
@@ -319,5 +329,21 @@ public class WhatsAppNotificationService {
             return "http://localhost:3000/admin/orders";
         }
         return adminOrdersUrl;
+    }
+
+    private String normalizePublicBaseUrl() {
+        if (!StringUtils.hasText(publicBaseUrl)) {
+            return "http://localhost:8080";
+        }
+        return publicBaseUrl;
+    }
+
+    private String buildApprovalLink(Order order) {
+        String token = jwtTokenProvider.generateWhatsAppApprovalToken(order.getId());
+        return UriComponentsBuilder.fromUriString(normalizePublicBaseUrl())
+                .path("/api/orders/{id}/approve-from-whatsapp")
+                .queryParam("token", token)
+                .buildAndExpand(order.getId())
+                .toUriString();
     }
 }

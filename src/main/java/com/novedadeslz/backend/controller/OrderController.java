@@ -4,7 +4,10 @@ import com.novedadeslz.backend.dto.request.OrderPaymentReviewRequest;
 import com.novedadeslz.backend.dto.request.OrderRequest;
 import com.novedadeslz.backend.dto.response.ApiResponse;
 import com.novedadeslz.backend.dto.response.OrderResponse;
+import com.novedadeslz.backend.exception.BadRequestException;
+import com.novedadeslz.backend.exception.ResourceNotFoundException;
 import com.novedadeslz.backend.model.Order;
+import com.novedadeslz.backend.security.JwtTokenProvider;
 import com.novedadeslz.backend.service.OrderService;
 import com.novedadeslz.backend.service.WhatsAppNotificationService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -33,6 +36,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
@@ -48,6 +52,10 @@ public class OrderController {
 
     private final OrderService orderService;
     private final WhatsAppNotificationService whatsAppNotificationService;
+    private final JwtTokenProvider jwtTokenProvider;
+
+    @Value("${app.admin-orders-url:http://localhost:3000/admin/orders}")
+    private String adminOrdersUrl;
 
     @PostMapping
     @Operation(summary = "Crear nuevo pedido (publico)")
@@ -190,6 +198,42 @@ public class OrderController {
         );
     }
 
+    @GetMapping(value = "/{id}/approve-from-whatsapp", produces = MediaType.TEXT_HTML_VALUE)
+    @Operation(summary = "Aprobar pedido desde enlace firmado de WhatsApp")
+    public ResponseEntity<String> approveFromWhatsApp(
+            @PathVariable Long id,
+            @RequestParam("token") String token) {
+
+        if (!jwtTokenProvider.validateWhatsAppApprovalToken(token, id)) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .contentType(MediaType.TEXT_HTML)
+                    .body(buildWhatsAppActionPage(
+                            false,
+                            "Enlace invalido o expirado",
+                            "Pide un nuevo enlace desde el panel admin o revisa el pedido manualmente."
+                    ));
+        }
+
+        try {
+            OrderResponse order = orderService.approveOrderPaymentFromWhatsApp(id);
+            return ResponseEntity.ok()
+                    .contentType(MediaType.TEXT_HTML)
+                    .body(buildWhatsAppActionPage(
+                            true,
+                            "Pedido aprobado",
+                            "El pedido " + order.getOrderNumber() + " fue confirmado correctamente."
+                    ));
+        } catch (ResourceNotFoundException | BadRequestException ex) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .contentType(MediaType.TEXT_HTML)
+                    .body(buildWhatsAppActionPage(
+                            false,
+                            "No se pudo aprobar el pedido",
+                            ex.getMessage()
+                    ));
+        }
+    }
+
     @PostMapping("/{id}/resend-whatsapp-notification")
     @PreAuthorize("hasRole('ADMIN')")
     @SecurityRequirement(name = "bearerAuth")
@@ -223,5 +267,37 @@ public class OrderController {
         return ResponseEntity.ok(
                 ApiResponse.success("Mensaje de prueba enviado correctamente por WhatsApp.", responseData)
         );
+    }
+
+    private String buildWhatsAppActionPage(boolean success, String title, String message) {
+        String accentColor = success ? "#1f9d55" : "#c2410c";
+        String badgeText = success ? "Aprobado" : "Revisar";
+
+        return """
+                <!doctype html>
+                <html lang="es">
+                <head>
+                  <meta charset="utf-8">
+                  <meta name="viewport" content="width=device-width, initial-scale=1">
+                  <title>%s</title>
+                  <style>
+                    body { font-family: Arial, sans-serif; background: #120914; color: #f7eefe; margin: 0; padding: 32px 20px; }
+                    .card { max-width: 560px; margin: 0 auto; background: #231127; border: 1px solid #4a2350; border-radius: 18px; padding: 28px; }
+                    .badge { display: inline-block; background: %s; color: #fff; padding: 8px 14px; border-radius: 999px; font-size: 14px; font-weight: 700; }
+                    h1 { margin: 18px 0 12px; font-size: 28px; }
+                    p { line-height: 1.6; color: #eadcf2; }
+                    a { display: inline-block; margin-top: 18px; background: #f74fb9; color: #190c1c; text-decoration: none; font-weight: 700; padding: 12px 18px; border-radius: 12px; }
+                  </style>
+                </head>
+                <body>
+                  <div class="card">
+                    <span class="badge">%s</span>
+                    <h1>%s</h1>
+                    <p>%s</p>
+                    <a href="%s" target="_blank" rel="noopener noreferrer">Abrir panel admin</a>
+                  </div>
+                </body>
+                </html>
+                """.formatted(title, accentColor, badgeText, title, message, adminOrdersUrl);
     }
 }
