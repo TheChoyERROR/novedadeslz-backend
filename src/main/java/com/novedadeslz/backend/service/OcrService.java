@@ -9,6 +9,7 @@ import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -55,6 +56,11 @@ public class OcrService {
         // Validar tamaño (máximo 5MB para OCR.space)
         if (imageFile.getSize() > 5 * 1024 * 1024) {
             throw new IllegalArgumentException("La imagen no debe superar 5MB");
+        }
+
+        if (!StringUtils.hasText(ocrApiKey)) {
+            log.warn("OCR_SPACE_API_KEY no configurada; no se puede analizar el comprobante");
+            throw new IOException("OCR no configurado. Falta OCR_SPACE_API_KEY");
         }
 
         // Convertir imagen a Base64
@@ -220,6 +226,19 @@ public class OcrService {
         result.setRecipientValid(recipientValid);
 
         // 8. Validar si se detectó información clave
+        int numericSignalsCount = countNumericSignals(normalizedText);
+        result.setNumericSignalsCount(numericSignalsCount);
+
+        boolean basicSignalsDetected =
+                result.isContainsYape() ||
+                StringUtils.hasText(result.getOperationNumber()) ||
+                result.getAmount() != null ||
+                StringUtils.hasText(result.getDateTime()) ||
+                result.isRecipientValid() ||
+                numericSignalsCount >= 2;
+
+        result.setBasicSignalsDetected(basicSignalsDetected);
+
         result.setValid(
                 result.getOperationNumber() != null &&
                 result.getAmount() != null &&
@@ -236,6 +255,18 @@ public class OcrService {
         }
 
         return result;
+    }
+
+    private int countNumericSignals(String normalizedText) {
+        Pattern numericPattern = Pattern.compile("\\b\\d{2,}\\b");
+        Matcher matcher = numericPattern.matcher(normalizedText);
+        int count = 0;
+
+        while (matcher.find()) {
+            count++;
+        }
+
+        return count;
     }
 
     /**
@@ -313,10 +344,12 @@ public class OcrService {
         private String dateTime;
         private boolean containsYape;
         private boolean valid;
+        private boolean basicSignalsDetected;
         private String rawText;
         private String recipientPhone;
         private String recipientName;
         private boolean recipientValid;
+        private int numericSignalsCount;
 
         /**
          * Verifica si el monto coincide con el esperado (con margen de error de S/ 0.10)

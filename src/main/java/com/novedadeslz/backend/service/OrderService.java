@@ -86,7 +86,7 @@ public class OrderService {
         }
 
         order.setTotal(total);
-        return mapToResponse(orderRepository.save(order));
+        return mapToResponse(orderRepository.save(order), false);
     }
 
     @Transactional
@@ -98,7 +98,7 @@ public class OrderService {
         order.setStatus(newStatus);
         applyStockRules(order, oldStatus, newStatus);
 
-        return mapToResponse(orderRepository.save(order));
+        return mapToResponse(orderRepository.save(order), true);
     }
 
     @Transactional(readOnly = true)
@@ -121,14 +121,14 @@ public class OrderService {
             orders = orderRepository.findAll(pageable);
         }
 
-        return orders.map(this::mapToResponse);
+        return orders.map(order -> mapToResponse(order, true));
     }
 
     @Transactional(readOnly = true)
     public OrderResponse getOrderById(Long id) {
         Order order = orderRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Pedido no encontrado"));
-        return mapToResponse(order);
+        return mapToResponse(order, false);
     }
 
     @Transactional
@@ -193,7 +193,7 @@ public class OrderService {
             savedOrder = orderRepository.save(savedOrder);
         }
 
-        return mapToResponse(savedOrder);
+        return mapToResponse(savedOrder, false);
     }
 
     @Transactional
@@ -233,7 +233,7 @@ public class OrderService {
 
         Order updatedOrder = orderRepository.save(order);
         log.info("Pedido {} aprobado manualmente", order.getOrderNumber());
-        return mapToResponse(updatedOrder);
+        return mapToResponse(updatedOrder, true);
     }
 
     @Transactional
@@ -256,7 +256,7 @@ public class OrderService {
 
         Order updatedOrder = orderRepository.save(order);
         log.info("Pedido {} rechazado manualmente", order.getOrderNumber());
-        return mapToResponse(updatedOrder);
+        return mapToResponse(updatedOrder, true);
     }
 
     @Transactional
@@ -277,7 +277,7 @@ public class OrderService {
 
         Order updatedOrder = orderRepository.save(order);
         log.info("Resultado reintento WhatsApp para pedido {}: {}", order.getOrderNumber(), notificationSent);
-        return mapToResponse(updatedOrder);
+        return mapToResponse(updatedOrder, true);
     }
 
     private void applyStockRules(Order order, Order.OrderStatus oldStatus, Order.OrderStatus newStatus) {
@@ -310,9 +310,12 @@ public class OrderService {
         return String.format("ORD-%s-%04d", timestamp, count + 1);
     }
 
-    private OrderResponse mapToResponse(Order order) {
+    private OrderResponse mapToResponse(Order order, boolean includeInternalNotes) {
         OrderResponse response = modelMapper.map(order, OrderResponse.class);
         response.setStatus(order.getStatus().name());
+        if (!includeInternalNotes) {
+            response.setNotes(null);
+        }
 
         if (order.getItems() != null) {
             var itemResponses = order.getItems().stream()
@@ -345,6 +348,10 @@ public class OrderService {
         }
 
         appendNote(order, buildOcrSummary(order, ocrResult, detectedOperationNumber, operationAvailable));
+
+        if (!ocrResult.isBasicSignalsDetected()) {
+            appendNote(order, "OCR no detecto senales basicas de comprobante Yape. Revisar imagen manualmente.");
+        }
     }
 
     private String buildOcrSummary(
@@ -354,12 +361,14 @@ public class OrderService {
             boolean operationAvailable) {
 
         StringBuilder summary = new StringBuilder("Resumen OCR:");
+        summary.append(" senalesBasicas=").append(booleanLabel(ocrResult.isBasicSignalsDetected()));
         summary.append(" yape=").append(booleanLabel(ocrResult.isContainsYape()));
         summary.append(", montoDetectado=").append(ocrResult.getAmount() != null ? "S/ " + ocrResult.getAmount() : "no");
         summary.append(", montoCoincide=").append(booleanLabel(
                 ocrResult.getAmount() != null && ocrResult.matchesAmount(order.getTotal())
         ));
         summary.append(", destinatarioValido=").append(booleanLabel(ocrResult.isRecipientValid()));
+        summary.append(", numerosDetectados=").append(ocrResult.getNumericSignalsCount());
         summary.append(", fechaReciente=").append(booleanLabel(
                 !StringUtils.hasText(ocrResult.getDateTime()) || isDateRecent(ocrResult.getDateTime())
         ));
