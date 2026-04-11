@@ -184,7 +184,9 @@ public class OrderService {
         }
 
         Order savedOrder = orderRepository.save(order);
+        log.info("Intentando notificar por WhatsApp al admin sobre el pedido {} en revision", savedOrder.getOrderNumber());
         boolean notificationSent = whatsAppNotificationService.notifyAdminPaymentUnderReview(savedOrder);
+        log.info("Resultado notificacion WhatsApp para pedido {}: {}", savedOrder.getOrderNumber(), notificationSent);
 
         if (!Boolean.valueOf(notificationSent).equals(savedOrder.getWhatsappSent())) {
             savedOrder.setWhatsappSent(notificationSent);
@@ -254,6 +256,27 @@ public class OrderService {
 
         Order updatedOrder = orderRepository.save(order);
         log.info("Pedido {} rechazado manualmente", order.getOrderNumber());
+        return mapToResponse(updatedOrder);
+    }
+
+    @Transactional
+    public OrderResponse resendPaymentReviewNotification(Long orderId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Pedido no encontrado con ID: " + orderId));
+
+        if (order.getStatus() != Order.OrderStatus.PAYMENT_REVIEW) {
+            throw new BadRequestException("Solo se puede reenviar notificacion para pedidos en revision de pago");
+        }
+
+        log.info("Reintentando notificacion WhatsApp para pedido {}", order.getOrderNumber());
+        boolean notificationSent = whatsAppNotificationService.notifyAdminPaymentUnderReview(order);
+        order.setWhatsappSent(notificationSent);
+        appendNote(order, notificationSent
+                ? "Se reenvio la notificacion WhatsApp al administrador."
+                : "No se pudo reenviar la notificacion WhatsApp al administrador.");
+
+        Order updatedOrder = orderRepository.save(order);
+        log.info("Resultado reintento WhatsApp para pedido {}: {}", order.getOrderNumber(), notificationSent);
         return mapToResponse(updatedOrder);
     }
 

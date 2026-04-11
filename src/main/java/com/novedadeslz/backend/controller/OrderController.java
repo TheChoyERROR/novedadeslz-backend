@@ -6,6 +6,7 @@ import com.novedadeslz.backend.dto.response.ApiResponse;
 import com.novedadeslz.backend.dto.response.OrderResponse;
 import com.novedadeslz.backend.model.Order;
 import com.novedadeslz.backend.service.OrderService;
+import com.novedadeslz.backend.service.WhatsAppNotificationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -35,6 +36,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @RestController
@@ -45,6 +47,7 @@ import java.util.Map;
 public class OrderController {
 
     private final OrderService orderService;
+    private final WhatsAppNotificationService whatsAppNotificationService;
 
     @PostMapping
     @Operation(summary = "Crear nuevo pedido (publico)")
@@ -184,6 +187,41 @@ public class OrderController {
 
         return ResponseEntity.ok(
                 ApiResponse.success("Pago rechazado. El cliente debe reenviar su comprobante.", order)
+        );
+    }
+
+    @PostMapping("/{id}/resend-whatsapp-notification")
+    @PreAuthorize("hasRole('ADMIN')")
+    @SecurityRequirement(name = "bearerAuth")
+    @Operation(summary = "Reenviar notificacion WhatsApp al admin para un pedido en revision (requiere ADMIN)")
+    public ResponseEntity<ApiResponse<OrderResponse>> resendWhatsAppNotification(@PathVariable Long id) {
+        OrderResponse order = orderService.resendPaymentReviewNotification(id);
+
+        return ResponseEntity.ok(
+                ApiResponse.success("Se intento reenviar la notificacion WhatsApp al administrador.", order)
+        );
+    }
+
+    @PostMapping("/test-whatsapp")
+    @PreAuthorize("hasRole('ADMIN')")
+    @SecurityRequirement(name = "bearerAuth")
+    @Operation(summary = "Enviar mensaje de prueba por WhatsApp al admin configurado (requiere ADMIN)")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> sendWhatsAppTestMessage() {
+        boolean sent = whatsAppNotificationService.sendAdminTestMessage();
+
+        Map<String, Object> responseData = new LinkedHashMap<>();
+        responseData.put("sent", sent);
+
+        if (!sent) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(
+                    ApiResponse.<Map<String, Object>>error(
+                            "No se pudo enviar el mensaje de prueba. Revisa la configuracion de Twilio y el sandbox."
+                    )
+            );
+        }
+
+        return ResponseEntity.ok(
+                ApiResponse.success("Mensaje de prueba enviado correctamente por WhatsApp.", responseData)
         );
     }
 }

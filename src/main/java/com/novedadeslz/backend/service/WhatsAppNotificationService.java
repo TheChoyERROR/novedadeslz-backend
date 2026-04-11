@@ -65,6 +65,24 @@ public class WhatsAppNotificationService {
     private final RestTemplate restTemplate = new RestTemplate();
 
     public boolean notifyAdminPaymentUnderReview(Order order) {
+        return sendAdminMessage(
+                buildAdminMessage(order),
+                hasPublicMediaUrl(order.getPaymentProof()) ? order.getPaymentProof() : null
+        );
+    }
+
+    public boolean sendAdminTestMessage() {
+        String testMessage = String.join("\n",
+                "Prueba de WhatsApp Twilio",
+                "Novedades LZ conecto correctamente las notificaciones.",
+                "Si recibes este mensaje, el sandbox esta listo para revisar pedidos.",
+                "Panel admin: " + normalizeAdminOrdersUrl()
+        );
+
+        return sendAdminMessage(testMessage, null);
+    }
+
+    private boolean sendAdminMessage(String messageBody, String mediaUrl) {
         if (!notificationsEnabled) {
             log.info("Notificaciones WhatsApp deshabilitadas");
             return false;
@@ -78,26 +96,26 @@ public class WhatsAppNotificationService {
 
         String activeProvider = normalizeProvider(provider);
         if ("twilio".equals(activeProvider)) {
-            return sendViaTwilio(order, normalizedAdminPhone);
+            return sendViaTwilio(normalizedAdminPhone, messageBody, mediaUrl);
         }
 
         if ("meta".equals(activeProvider)) {
-            return sendViaMeta(order, normalizedAdminPhone);
+            return sendViaMeta(normalizedAdminPhone, messageBody);
         }
 
         if (isTwilioConfigured()) {
-            return sendViaTwilio(order, normalizedAdminPhone);
+            return sendViaTwilio(normalizedAdminPhone, messageBody, mediaUrl);
         }
 
         if (isMetaConfigured()) {
-            return sendViaMeta(order, normalizedAdminPhone);
+            return sendViaMeta(normalizedAdminPhone, messageBody);
         }
 
         log.warn("No hay proveedor WhatsApp configurado. Configura Twilio o Meta Cloud API");
         return false;
     }
 
-    private boolean sendViaMeta(Order order, String normalizedAdminPhone) {
+    private boolean sendViaMeta(String normalizedAdminPhone, String messageBody) {
         if (!isMetaConfigured()) {
             log.warn("WhatsApp Cloud API no esta configurado. Falta access token o phone number id");
             return false;
@@ -114,7 +132,7 @@ public class WhatsAppNotificationService {
         headers.setContentType(MediaType.APPLICATION_JSON);
 
         HttpEntity<Map<String, Object>> request = new HttpEntity<>(
-                buildTextMessagePayload(normalizedAdminPhone, buildAdminMessage(order)),
+                buildTextMessagePayload(normalizedAdminPhone, messageBody),
                 headers
         );
 
@@ -123,24 +141,23 @@ public class WhatsAppNotificationService {
             HttpStatusCode status = response.getStatusCode();
 
             if (status.is2xxSuccessful()) {
-                log.info("Notificacion WhatsApp enviada por Meta para pedido {}", order.getOrderNumber());
+                log.info("Notificacion WhatsApp enviada por Meta al admin");
                 return true;
             }
 
-            log.warn("WhatsApp Cloud API respondio con status {} para pedido {}", status, order.getOrderNumber());
+            log.warn("WhatsApp Cloud API respondio con status {} al notificar al admin", status);
             return false;
         } catch (RestClientResponseException e) {
-            log.error("Meta Cloud API rechazo la notificacion para pedido {}: status={}, body={}",
-                    order.getOrderNumber(), e.getStatusCode(), e.getResponseBodyAsString());
+            log.error("Meta Cloud API rechazo la notificacion al admin: status={}, body={}",
+                    e.getStatusCode(), e.getResponseBodyAsString());
             return false;
         } catch (RestClientException e) {
-            log.error("No se pudo enviar notificacion WhatsApp por Meta para pedido {}: {}",
-                    order.getOrderNumber(), e.getMessage());
+            log.error("No se pudo enviar notificacion WhatsApp por Meta al admin: {}", e.getMessage());
             return false;
         }
     }
 
-    private boolean sendViaTwilio(Order order, String normalizedAdminPhone) {
+    private boolean sendViaTwilio(String normalizedAdminPhone, String messageBody, String mediaUrl) {
         if (!isTwilioConfigured()) {
             log.warn("Twilio WhatsApp no esta configurado. Falta Account SID o credenciales");
             return false;
@@ -158,10 +175,10 @@ public class WhatsAppNotificationService {
         MultiValueMap<String, String> formData = new LinkedMultiValueMap<>();
         formData.add("From", normalizeTwilioAddress(twilioFrom));
         formData.add("To", normalizeTwilioAddress(normalizedAdminPhone));
-        formData.add("Body", buildAdminMessage(order));
+        formData.add("Body", messageBody);
 
-        if (hasPublicMediaUrl(order.getPaymentProof())) {
-            formData.add("MediaUrl", order.getPaymentProof());
+        if (hasPublicMediaUrl(mediaUrl)) {
+            formData.add("MediaUrl", mediaUrl);
         }
 
         try {
@@ -172,19 +189,18 @@ public class WhatsAppNotificationService {
             );
 
             if (response.getStatusCode().is2xxSuccessful()) {
-                log.info("Notificacion WhatsApp enviada por Twilio para pedido {}", order.getOrderNumber());
+                log.info("Notificacion WhatsApp enviada por Twilio al admin");
                 return true;
             }
 
-            log.warn("Twilio respondio con status {} para pedido {}", response.getStatusCode(), order.getOrderNumber());
+            log.warn("Twilio respondio con status {} al notificar al admin", response.getStatusCode());
             return false;
         } catch (RestClientResponseException e) {
-            log.error("Twilio rechazo la notificacion para pedido {}: status={}, body={}",
-                    order.getOrderNumber(), e.getStatusCode(), e.getResponseBodyAsString());
+            log.error("Twilio rechazo la notificacion al admin: status={}, body={}",
+                    e.getStatusCode(), e.getResponseBodyAsString());
             return false;
         } catch (RestClientException e) {
-            log.error("No se pudo enviar notificacion WhatsApp por Twilio para pedido {}: {}",
-                    order.getOrderNumber(), e.getMessage());
+            log.error("No se pudo enviar notificacion WhatsApp por Twilio al admin: {}", e.getMessage());
             return false;
         }
     }
