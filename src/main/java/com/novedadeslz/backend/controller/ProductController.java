@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.novedadeslz.backend.dto.request.ProductRequest;
 import com.novedadeslz.backend.dto.response.ApiResponse;
+import com.novedadeslz.backend.dto.response.PageResponse;
 import com.novedadeslz.backend.dto.response.ProductResponse;
 import com.novedadeslz.backend.exception.BadRequestException;
 import com.novedadeslz.backend.service.ProductService;
@@ -48,7 +49,7 @@ public class ProductController {
 
     @GetMapping
     @Operation(summary = "Obtener todos los productos")
-    public ResponseEntity<ApiResponse<Page<ProductResponse>>> getAllProducts(
+    public ResponseEntity<ApiResponse<PageResponse<ProductResponse>>> getAllProducts(
             @RequestParam(required = false) String category,
             @RequestParam(required = false) String search,
             @RequestParam(required = false, defaultValue = "true") Boolean active,
@@ -67,12 +68,12 @@ public class ProductController {
                 category, search, active, pageable
         );
 
-        return ResponseEntity.ok(ApiResponse.success(products));
+        return ResponseEntity.ok(ApiResponse.success(PageResponse.from(products)));
     }
 
     @GetMapping("/category/{category}")
     @Operation(summary = "Obtener productos por categoria")
-    public ResponseEntity<ApiResponse<Page<ProductResponse>>> getProductsByCategory(
+    public ResponseEntity<ApiResponse<PageResponse<ProductResponse>>> getProductsByCategory(
             @PathVariable String category,
             @RequestParam(required = false) String search,
             @RequestParam(required = false, defaultValue = "true") Boolean active,
@@ -91,12 +92,12 @@ public class ProductController {
                 category, search, active, pageable
         );
 
-        return ResponseEntity.ok(ApiResponse.success(products));
+        return ResponseEntity.ok(ApiResponse.success(PageResponse.from(products)));
     }
 
     @GetMapping("/search")
     @Operation(summary = "Buscar productos por nombre o descripcion")
-    public ResponseEntity<ApiResponse<Page<ProductResponse>>> searchProducts(
+    public ResponseEntity<ApiResponse<PageResponse<ProductResponse>>> searchProducts(
             @RequestParam String query,
             @RequestParam(required = false, defaultValue = "true") Boolean active,
             @RequestParam(defaultValue = "0") int page,
@@ -114,7 +115,7 @@ public class ProductController {
                 null, query, active, pageable
         );
 
-        return ResponseEntity.ok(ApiResponse.success(products));
+        return ResponseEntity.ok(ApiResponse.success(PageResponse.from(products)));
     }
 
     @GetMapping("/{id}")

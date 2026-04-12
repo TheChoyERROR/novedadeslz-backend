@@ -4,6 +4,7 @@ import com.novedadeslz.backend.dto.request.OrderPaymentReviewRequest;
 import com.novedadeslz.backend.dto.request.OrderRequest;
 import com.novedadeslz.backend.dto.response.ApiResponse;
 import com.novedadeslz.backend.dto.response.OrderResponse;
+import com.novedadeslz.backend.dto.response.PageResponse;
 import com.novedadeslz.backend.exception.BadRequestException;
 import com.novedadeslz.backend.exception.ResourceNotFoundException;
 import com.novedadeslz.backend.model.Order;
@@ -77,7 +78,7 @@ public class OrderController {
     @PreAuthorize("hasRole('ADMIN')")
     @SecurityRequirement(name = "bearerAuth")
     @Operation(summary = "Obtener todos los pedidos (requiere ADMIN)")
-    public ResponseEntity<ApiResponse<Page<OrderResponse>>> getAllOrders(
+    public ResponseEntity<ApiResponse<PageResponse<OrderResponse>>> getAllOrders(
             @RequestParam(required = false) Order.OrderStatus status,
             @RequestParam(required = false) String customerPhone,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startDate,
@@ -97,7 +98,7 @@ public class OrderController {
                 status, customerPhone, startDate, endDate, pageable
         );
 
-        return ResponseEntity.ok(ApiResponse.success(orders));
+        return ResponseEntity.ok(ApiResponse.success(PageResponse.from(orders)));
     }
 
     @GetMapping("/{id}")
