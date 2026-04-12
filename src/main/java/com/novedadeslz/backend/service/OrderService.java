@@ -164,22 +164,32 @@ public class OrderService {
             throw new BadRequestException("Solo se puede subir comprobante para pedidos pendientes o rechazados");
         }
 
-        if (StringUtils.hasText(order.getPaymentProof())) {
-            cloudinaryService.deleteImage(order.getPaymentProof());
+        OcrService.YapeOcrResult ocrResult = null;
+        String previousProofUrl = order.getPaymentProof();
+        try {
+            ocrResult = ocrService.analyzeYapeReceipt(proofImage);
+            validateProofLooksLikeYapeReceipt(ocrResult);
+        } catch (Exception e) {
+            if (e instanceof BadRequestException badRequestException) {
+                throw badRequestException;
+            }
+            log.warn("No se pudo analizar OCR para pedido {}: {}", order.getOrderNumber(), e.getMessage());
         }
 
         String proofUrl = cloudinaryService.uploadImage(proofImage);
+        if (StringUtils.hasText(previousProofUrl)) {
+            cloudinaryService.deleteImage(previousProofUrl);
+        }
+
         order.setPaymentProof(proofUrl);
         order.setStatus(Order.OrderStatus.PAYMENT_REVIEW);
         order.setOperationNumber(null);
         order.setWhatsappSent(false);
         appendNote(order, "Cliente subio un comprobante Yape para revision manual.");
 
-        try {
-            OcrService.YapeOcrResult ocrResult = ocrService.analyzeYapeReceipt(proofImage);
+        if (ocrResult != null) {
             applyOcrInsights(order, ocrResult);
-        } catch (Exception e) {
-            log.warn("No se pudo analizar OCR para pedido {}: {}", order.getOrderNumber(), e.getMessage());
+        } else {
             appendNote(order, "OCR no disponible o no legible. Requiere revision manual completa.");
         }
 
@@ -377,6 +387,26 @@ public class OrderService {
         }
     }
 
+    private void validateProofLooksLikeYapeReceipt(OcrService.YapeOcrResult ocrResult) {
+        if (ocrResult.isBasicSignalsDetected()) {
+            return;
+        }
+
+        log.warn(
+                "Comprobante rechazado por OCR. No se detectaron senales minimas de Yape. yape={}, operacion={}, monto={}, destinatarioValido={}, numeros={}, keywords={}",
+                ocrResult.isContainsYape(),
+                ocrResult.getOperationNumber(),
+                ocrResult.getAmount(),
+                ocrResult.isRecipientValid(),
+                ocrResult.getNumericSignalsCount(),
+                ocrResult.getPaymentKeywordsCount()
+        );
+
+        throw new BadRequestException(
+                "La imagen no parece ser un comprobante Yape valido. Sube una captura donde se vea Yape, el numero de operacion o datos de pago legibles."
+        );
+    }
+
     private String buildOcrSummary(
             Order order,
             OcrService.YapeOcrResult ocrResult,
@@ -392,6 +422,7 @@ public class OrderService {
         ));
         summary.append(", destinatarioValido=").append(booleanLabel(ocrResult.isRecipientValid()));
         summary.append(", numerosDetectados=").append(ocrResult.getNumericSignalsCount());
+        summary.append(", keywordsPago=").append(ocrResult.getPaymentKeywordsCount());
         summary.append(", fechaReciente=").append(booleanLabel(
                 !StringUtils.hasText(ocrResult.getDateTime()) || isDateRecent(ocrResult.getDateTime())
         ));

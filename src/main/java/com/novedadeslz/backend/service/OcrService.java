@@ -229,15 +229,20 @@ public class OcrService {
         int numericSignalsCount = countNumericSignals(normalizedText);
         result.setNumericSignalsCount(numericSignalsCount);
 
-        boolean basicSignalsDetected =
+        int paymentKeywordsCount = countPaymentKeywords(normalizedText);
+        result.setPaymentKeywordsCount(paymentKeywordsCount);
+
+        boolean strongSignalsDetected =
                 result.isContainsYape() ||
                 StringUtils.hasText(result.getOperationNumber()) ||
                 result.getAmount() != null ||
-                StringUtils.hasText(result.getDateTime()) ||
-                result.isRecipientValid() ||
+                result.isRecipientValid();
+
+        boolean fallbackSignalsDetected =
+                paymentKeywordsCount >= 2 &&
                 numericSignalsCount >= 2;
 
-        result.setBasicSignalsDetected(basicSignalsDetected);
+        result.setBasicSignalsDetected(strongSignalsDetected || fallbackSignalsDetected);
 
         result.setValid(
                 result.getOperationNumber() != null &&
@@ -264,6 +269,31 @@ public class OcrService {
 
         while (matcher.find()) {
             count++;
+        }
+
+        return count;
+    }
+
+    private int countPaymentKeywords(String normalizedText) {
+        String loweredText = normalizedText.toLowerCase();
+        String[] paymentKeywords = {
+                "yape",
+                "operacion",
+                "operación",
+                "monto",
+                "total",
+                "destinatario",
+                "para",
+                "yapear",
+                "enviado",
+                "fecha"
+        };
+
+        int count = 0;
+        for (String keyword : paymentKeywords) {
+            if (loweredText.contains(keyword)) {
+                count++;
+            }
         }
 
         return count;
@@ -350,6 +380,7 @@ public class OcrService {
         private String recipientName;
         private boolean recipientValid;
         private int numericSignalsCount;
+        private int paymentKeywordsCount;
 
         /**
          * Verifica si el monto coincide con el esperado (con margen de error de S/ 0.10)
