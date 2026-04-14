@@ -21,6 +21,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Slf4j
 public class CloudinaryService {
+    private static final long MAX_VIDEO_SIZE_BYTES = 50L * 1024 * 1024;
 
     private final Cloudinary cloudinary;
 
@@ -173,9 +174,8 @@ public class CloudinaryService {
             throw new IllegalArgumentException("El archivo debe ser un video");
         }
 
-        long maxSize = 25L * 1024 * 1024;
-        if (file.getSize() > maxSize) {
-            throw new IllegalArgumentException("El video no debe superar 25MB");
+        if (file.getSize() > MAX_VIDEO_SIZE_BYTES) {
+            throw new IllegalArgumentException("El video no debe superar 50MB");
         }
     }
 
