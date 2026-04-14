@@ -5,7 +5,9 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertIterableEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 class ProductTest {
@@ -52,5 +54,17 @@ class ProductTest {
 
         assertNull(product.getImageUrl());
         assertIterableEquals(List.of(), product.getImageUrls());
+    }
+
+    @Test
+    void productWithoutInventoryTrackingShouldAlwaysBeAvailable() {
+        Product product = Product.builder()
+                .stock(0)
+                .trackInventory(false)
+                .build();
+
+        assertTrue(product.hasAvailableStock(5));
+        assertFalse(product.isOutOfStock());
+        assertFalse(product.isLowStock());
     }
 }

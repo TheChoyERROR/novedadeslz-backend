@@ -133,12 +133,14 @@ public class ProductController {
             @Parameter(description = "JSON string of product data", required = true)
             @RequestPart("product") String productRequestJson,
             @RequestPart(value = "images", required = false) MultipartFile[] images,
-            @RequestPart(value = "image", required = false) MultipartFile image) {
+            @RequestPart(value = "image", required = false) MultipartFile image,
+            @RequestPart(value = "video", required = false) MultipartFile video) {
 
         List<MultipartFile> resolvedImages = resolveImages(images, image);
         log.info("Recibiendo solicitud de creacion de producto");
         log.info("JSON recibido: {}", productRequestJson);
         log.info("Cantidad de imagenes recibidas: {}", resolvedImages.size());
+        log.info("Video recibido: {}", video != null && !video.isEmpty());
 
         ProductRequest request;
         try {
@@ -148,7 +150,7 @@ public class ProductController {
             throw new BadRequestException("Formato de JSON invalido: " + e.getMessage());
         }
 
-        ProductResponse product = productService.createProduct(request, resolvedImages);
+        ProductResponse product = productService.createProduct(request, resolvedImages, video);
 
         return ResponseEntity
                 .status(HttpStatus.CREATED)
@@ -164,7 +166,8 @@ public class ProductController {
             @Parameter(description = "JSON string of product data", required = true)
             @RequestPart("product") String productRequestJson,
             @RequestPart(value = "images", required = false) MultipartFile[] images,
-            @RequestPart(value = "image", required = false) MultipartFile image) {
+            @RequestPart(value = "image", required = false) MultipartFile image,
+            @RequestPart(value = "video", required = false) MultipartFile video) {
 
         ProductRequest request;
         try {
@@ -174,7 +177,7 @@ public class ProductController {
             throw new BadRequestException("Formato de JSON invalido: " + e.getMessage());
         }
 
-        ProductResponse product = productService.updateProduct(id, request, resolveImages(images, image));
+        ProductResponse product = productService.updateProduct(id, request, resolveImages(images, image), video);
 
         return ResponseEntity.ok(
                 ApiResponse.success("Producto actualizado exitosamente", product)

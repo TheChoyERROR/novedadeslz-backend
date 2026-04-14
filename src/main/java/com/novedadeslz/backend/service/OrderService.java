@@ -66,7 +66,7 @@ public class OrderService {
                             "Producto no encontrado con ID: " + itemRequest.getProductId()
                     ));
 
-            if (product.getStock() < itemRequest.getQuantity()) {
+            if (!product.hasAvailableStock(itemRequest.getQuantity())) {
                 throw new BadRequestException(
                         "Stock insuficiente para " + product.getName() +
                                 ". Disponible: " + product.getStock()

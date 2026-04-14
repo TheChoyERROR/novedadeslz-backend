@@ -43,12 +43,19 @@ public class Product {
     @Setter(AccessLevel.NONE)
     private String imageUrl;
 
+    @Column(name = "video_url", length = 500)
+    private String videoUrl;
+
     @Column(length = 100)
     private String category;
 
     @Column(nullable = false)
     @Builder.Default
     private Integer stock = 0;
+
+    @Column(name = "track_inventory", nullable = false)
+    @Builder.Default
+    private Boolean trackInventory = true;
 
     @Column(nullable = false)
     @Builder.Default
@@ -64,6 +71,10 @@ public class Product {
 
     // Business logic
     public void decreaseStock(Integer quantity) {
+        if (!isTrackingInventory()) {
+            return;
+        }
+
         if (this.stock < quantity) {
             throw new IllegalStateException(
                 "Stock insuficiente. Disponible: " + this.stock + ", Solicitado: " + quantity
@@ -73,11 +84,27 @@ public class Product {
     }
 
     public void increaseStock(Integer quantity) {
+        if (!isTrackingInventory()) {
+            return;
+        }
+
         this.stock += quantity;
     }
 
     public boolean isLowStock() {
-        return this.stock <= 5;
+        return isTrackingInventory() && this.stock <= 5;
+    }
+
+    public boolean isOutOfStock() {
+        return isTrackingInventory() && this.stock <= 0;
+    }
+
+    public boolean hasAvailableStock(Integer quantity) {
+        return !isTrackingInventory() || this.stock >= quantity;
+    }
+
+    public boolean isTrackingInventory() {
+        return Boolean.TRUE.equals(trackInventory);
     }
 
     public String getImageUrl() {

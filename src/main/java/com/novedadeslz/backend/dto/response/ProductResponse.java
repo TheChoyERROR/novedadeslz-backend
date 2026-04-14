@@ -21,14 +21,16 @@ public class ProductResponse {
     private BigDecimal price;
     private String imageUrl;
     private List<String> imageUrls;
+    private String videoUrl;
     private String category;
     private Integer stock;
+    private Boolean trackInventory;
     private Boolean active;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     private Boolean lowStock;
 
     public Boolean getLowStock() {
-        return stock != null && stock <= 5;
+        return Boolean.TRUE.equals(trackInventory) && stock != null && stock <= 5;
     }
 }

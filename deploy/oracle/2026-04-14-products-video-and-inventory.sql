@@ -1,0 +1,25 @@
+BEGIN
+  EXECUTE IMMEDIATE 'ALTER TABLE products ADD (video_url VARCHAR2(500))';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -1430 THEN
+      RAISE;
+    END IF;
+END;
+/
+
+BEGIN
+  EXECUTE IMMEDIATE 'ALTER TABLE products ADD (track_inventory NUMBER(1) DEFAULT 1 NOT NULL)';
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLCODE != -1430 THEN
+      RAISE;
+    END IF;
+END;
+/
+
+UPDATE products
+SET track_inventory = 1
+WHERE track_inventory IS NULL;
+
+COMMIT;

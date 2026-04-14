@@ -30,13 +30,19 @@ public class ProductRequest {
     @Size(max = 100, message = "La categoría no puede exceder 100 caracteres")
     private String category;
 
-    @NotNull(message = "El stock es obligatorio")
     @Min(value = 0, message = "El stock no puede ser negativo")
     private Integer stock;
+
+    private Boolean trackInventory = true;
 
     /**
      * URLs existentes que se conservaran al actualizar el producto.
      * Si no se envian en update, se asume que se mantienen todas las actuales.
      */
     private List<String> imageUrls;
+
+    /**
+     * Permite quitar el video actual al editar el producto.
+     */
+    private Boolean removeVideo = false;
 }

@@ -67,38 +67,78 @@ public class CloudinaryService {
         }
     }
 
-    public boolean deleteImage(String imageUrl) {
-        if (!StringUtils.hasText(imageUrl)) {
-            return false;
-        }
+    public String uploadVideo(MultipartFile file) throws IOException {
+        validateVideo(file);
 
-        if (isLocalUploadUrl(imageUrl)) {
-            return deleteLocalImage(imageUrl);
+        if (!isCloudinaryEnabled()) {
+            return uploadVideoLocally(file);
         }
 
         try {
-            String publicId = extractPublicIdFromUrl(imageUrl);
+            String publicId = UUID.randomUUID().toString();
+
+            Map<String, Object> uploadOptions = ObjectUtils.asMap(
+                    "public_id", publicId,
+                    "folder", "novedadeslz/products/videos",
+                    "resource_type", "video",
+                    "overwrite", false
+            );
+
+            Map uploadResult = cloudinary.uploader().upload(file.getBytes(), uploadOptions);
+            String videoUrl = (String) uploadResult.get("secure_url");
+
+            log.info("Video subido exitosamente a Cloudinary: {}", videoUrl);
+            return videoUrl;
+        } catch (IOException e) {
+            log.error("Error al subir video a Cloudinary: {}", e.getMessage());
+            throw new IOException("Error al subir el video: " + e.getMessage(), e);
+        }
+    }
+
+    public boolean deleteImage(String imageUrl) {
+        return deleteMedia(imageUrl);
+    }
+
+    public boolean deleteMedia(String mediaUrl) {
+        if (!StringUtils.hasText(mediaUrl)) {
+            return false;
+        }
+
+        if (isLocalUploadUrl(mediaUrl)) {
+            return deleteLocalImage(mediaUrl);
+        }
+
+        try {
+            String publicId = extractPublicIdFromUrl(mediaUrl);
 
             if (publicId == null) {
-                log.warn("No se pudo extraer public_id de la URL: {}", imageUrl);
+                log.warn("No se pudo extraer public_id de la URL: {}", mediaUrl);
                 return false;
             }
 
-            Map result = cloudinary.uploader().destroy(publicId, ObjectUtils.emptyMap());
+            Map<String, Object> destroyOptions = ObjectUtils.asMap(
+                    "resource_type", detectResourceType(mediaUrl)
+            );
+
+            Map result = cloudinary.uploader().destroy(publicId, destroyOptions);
             String resultStatus = (String) result.get("result");
             boolean success = "ok".equals(resultStatus);
 
             if (success) {
-                log.info("Imagen eliminada exitosamente de Cloudinary: {}", publicId);
+                log.info("Archivo eliminado exitosamente de Cloudinary: {}", publicId);
             } else {
-                log.warn("No se pudo eliminar la imagen de Cloudinary: {}", publicId);
+                log.warn("No se pudo eliminar el archivo de Cloudinary: {}", publicId);
             }
 
             return success;
         } catch (Exception e) {
-            log.error("Error al eliminar imagen de Cloudinary: {}", e.getMessage());
+            log.error("Error al eliminar archivo de Cloudinary: {}", e.getMessage());
             return false;
         }
+    }
+
+    private String detectResourceType(String mediaUrl) {
+        return mediaUrl != null && mediaUrl.contains("/video/upload/") ? "video" : "image";
     }
 
     private boolean isCloudinaryEnabled() {
@@ -123,6 +163,22 @@ public class CloudinaryService {
         }
     }
 
+    private void validateVideo(MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("El archivo no puede estar vacio");
+        }
+
+        String contentType = file.getContentType();
+        if (contentType == null || !contentType.startsWith("video/")) {
+            throw new IllegalArgumentException("El archivo debe ser un video");
+        }
+
+        long maxSize = 25L * 1024 * 1024;
+        if (file.getSize() > maxSize) {
+            throw new IllegalArgumentException("El video no debe superar 25MB");
+        }
+    }
+
     private String uploadImageLocally(MultipartFile file) throws IOException {
         String extension = getFileExtension(file);
         String fileName = UUID.randomUUID() + extension;
@@ -140,6 +196,25 @@ public class CloudinaryService {
         String imageUrl = normalizeBaseUrl(publicBaseUrl) + "/uploads/products/" + fileName;
         log.info("Imagen guardada localmente: {}", imageUrl);
         return imageUrl;
+    }
+
+    private String uploadVideoLocally(MultipartFile file) throws IOException {
+        String extension = getFileExtension(file);
+        String fileName = UUID.randomUUID() + extension;
+
+        Path uploadPath = Paths.get(localUploadDir, "products", "videos").toAbsolutePath().normalize();
+        Files.createDirectories(uploadPath);
+
+        Path destination = uploadPath.resolve(fileName).normalize();
+        if (!destination.startsWith(uploadPath)) {
+            throw new IOException("Ruta de destino invalida para el video");
+        }
+
+        Files.copy(file.getInputStream(), destination, StandardCopyOption.REPLACE_EXISTING);
+
+        String videoUrl = normalizeBaseUrl(publicBaseUrl) + "/uploads/products/videos/" + fileName;
+        log.info("Video guardado localmente: {}", videoUrl);
+        return videoUrl;
     }
 
     private boolean deleteLocalImage(String imageUrl) {
@@ -189,6 +264,15 @@ public class CloudinaryService {
         }
         if ("image/gif".equals(contentType)) {
             return ".gif";
+        }
+        if ("video/mp4".equals(contentType)) {
+            return ".mp4";
+        }
+        if ("video/webm".equals(contentType)) {
+            return ".webm";
+        }
+        if ("video/quicktime".equals(contentType)) {
+            return ".mov";
         }
 
         return ".jpg";

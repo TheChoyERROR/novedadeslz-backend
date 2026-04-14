@@ -1,8 +1,10 @@
 package com.novedadeslz.backend.service;
 
+import com.novedadeslz.backend.dto.request.OrderRequest;
 import com.novedadeslz.backend.dto.response.OrderResponse;
 import com.novedadeslz.backend.exception.BadRequestException;
 import com.novedadeslz.backend.model.Order;
+import com.novedadeslz.backend.model.Product;
 import com.novedadeslz.backend.repository.OrderRepository;
 import com.novedadeslz.backend.repository.ProductRepository;
 import org.junit.jupiter.api.Test;
@@ -16,11 +18,13 @@ import org.springframework.mock.web.MockMultipartFile;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
@@ -102,6 +106,43 @@ class OrderServiceTest {
         verify(cloudinaryService).uploadImage(proof);
         verify(orderRepository, atLeastOnce()).save(any(Order.class));
         verify(whatsAppNotificationService).notifyAdminPaymentUnderReview(any(Order.class));
+    }
+
+    @Test
+    void createOrderShouldAllowProductsWithoutInventoryTracking() {
+        Product product = Product.builder()
+                .id(7L)
+                .name("Vincha")
+                .price(new BigDecimal("15.00"))
+                .stock(0)
+                .trackInventory(false)
+                .active(true)
+                .build();
+
+        OrderRequest.OrderItemRequest itemRequest = new OrderRequest.OrderItemRequest();
+        itemRequest.setProductId(7L);
+        itemRequest.setQuantity(3);
+
+        OrderRequest request = new OrderRequest();
+        request.setCustomerName("Test");
+        request.setCustomerPhone("+51999999999");
+        request.setCustomerAddress("Direccion");
+        request.setCustomerCity("Lima");
+        request.setPaymentMethod("yape");
+        request.setItems(List.of(itemRequest));
+
+        OrderResponse mappedResponse = new OrderResponse();
+        mappedResponse.setOrderNumber("ORD-20260414-0002");
+
+        when(productRepository.findById(7L)).thenReturn(Optional.of(product));
+        when(orderRepository.countByOrderNumberStartingWith(anyString())).thenReturn(1L);
+        when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(modelMapper.map(any(Order.class), eq(OrderResponse.class))).thenReturn(mappedResponse);
+
+        OrderResponse response = orderService.createOrder(request);
+
+        assertEquals("ORD-20260414-0002", response.getOrderNumber());
+        verify(orderRepository).save(any(Order.class));
     }
 
     private Order buildPendingYapeOrder() {
