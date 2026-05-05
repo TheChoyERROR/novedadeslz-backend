@@ -3,6 +3,7 @@ package com.novedadeslz.backend.exception;
 import com.novedadeslz.backend.dto.response.ApiResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.transaction.CannotCreateTransactionException;
@@ -16,6 +17,7 @@ import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Locale;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -167,6 +169,32 @@ public class GlobalExceptionHandler {
                         .build());
     }
 
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ApiResponse<Void>> handleDataIntegrityViolation(
+            DataIntegrityViolationException ex) {
+        String rootMessage = extractRootMessage(ex);
+        String normalizedRootMessage = rootMessage == null ? "" : rootMessage.toLowerCase(Locale.ROOT);
+
+        if (normalizedRootMessage.contains("products")
+                && normalizedRootMessage.contains("image_url")) {
+            return ResponseEntity
+                    .status(HttpStatus.BAD_REQUEST)
+                    .body(ApiResponse.<Void>builder()
+                            .success(false)
+                            .message("La galeria del producto excede el espacio actual de la base de datos. "
+                                    + "Aplica la migracion Oracle para ampliar image_url antes de usar 20 fotos por producto.")
+                            .build());
+        }
+
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.<Void>builder()
+                        .success(false)
+                        .message("No se pudo guardar la informacion en la base de datos. "
+                                + (rootMessage != null ? "Detalle: " + rootMessage : ""))
+                        .build());
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleGenericException(
             Exception ex) {
@@ -191,5 +219,13 @@ public class GlobalExceptionHandler {
                 + "Si estas trabajando en local, inicia el backend con el perfil 'local' "
                 + "(H2) o configura Oracle en DB_URL, DB_USERNAME y DB_PASSWORD. "
                 + (rootMessage != null ? "Detalle: " + rootMessage : "");
+    }
+
+    private String extractRootMessage(Throwable ex) {
+        Throwable rootCause = ex;
+        while (rootCause.getCause() != null && rootCause.getCause() != rootCause) {
+            rootCause = rootCause.getCause();
+        }
+        return rootCause.getMessage();
     }
 }

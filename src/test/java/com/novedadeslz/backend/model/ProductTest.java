@@ -3,6 +3,7 @@ package com.novedadeslz.backend.model;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -54,6 +55,19 @@ class ProductTest {
 
         assertNull(product.getImageUrl());
         assertIterableEquals(List.of(), product.getImageUrls());
+    }
+
+    @Test
+    void imageUrlsSetterShouldSupportLargeGallery() {
+        Product product = new Product();
+        List<String> imageUrls = IntStream.rangeClosed(1, 20)
+                .mapToObj(index -> "https://res.cloudinary.com/demo/image/upload/v1/novedadeslz/products/" + index + ".jpg")
+                .toList();
+
+        product.setImageUrls(imageUrls);
+
+        assertEquals(imageUrls.getFirst(), product.getImageUrl());
+        assertIterableEquals(imageUrls, product.getImageUrls());
     }
 
     @Test

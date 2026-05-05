@@ -29,8 +29,8 @@ import java.util.stream.Collectors;
 @Slf4j
 public class ProductService {
 
-    private static final int MAX_PRODUCT_IMAGES = 10;
-    private static final int MAX_IMAGE_URL_STORAGE_LENGTH = 2000;
+    private static final int MAX_PRODUCT_IMAGES = 20;
+    private static final int MAX_IMAGE_URL_STORAGE_LENGTH = 4000;
     private static final int MAX_VIDEO_URL_STORAGE_LENGTH = 500;
 
     private final ProductRepository productRepository;
@@ -317,7 +317,7 @@ public class ProductService {
         if (serializedImageUrls.length() > MAX_IMAGE_URL_STORAGE_LENGTH) {
             throw new IllegalArgumentException(
                     "Las imagenes exceden el espacio disponible del producto. Usa hasta "
-                            + MAX_PRODUCT_IMAGES + " imagenes cortas por ahora."
+                            + MAX_PRODUCT_IMAGES + " imagenes por producto por ahora."
             );
         }
     }
