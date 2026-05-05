@@ -14,6 +14,7 @@ import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartException;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -57,7 +58,25 @@ public class GlobalExceptionHandler {
                 .status(HttpStatus.PAYLOAD_TOO_LARGE)
                 .body(ApiResponse.<Void>builder()
                         .success(false)
-                        .message("El archivo es demasiado grande. El video no debe superar 50MB.")
+                        .message("La carga de archivos supera el limite permitido. "
+                                + "Cada imagen debe pesar hasta 5MB, el video hasta 50MB "
+                                + "y el envio total no debe exceder el limite del servidor.")
+                        .build());
+    }
+
+    @ExceptionHandler(MultipartException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMultipartException(
+            MultipartException ex) {
+        String rootMessage = extractRootMessage(ex);
+        String detail = rootMessage == null ? ex.getMessage() : rootMessage;
+
+        return ResponseEntity
+                .status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(ApiResponse.<Void>builder()
+                        .success(false)
+                        .message("No se pudo procesar la carga de archivos. "
+                                + "Reduce la cantidad de fotos por intento o verifica el tamano total del upload. "
+                                + (detail != null ? "Detalle: " + detail : ""))
                         .build());
     }
 
