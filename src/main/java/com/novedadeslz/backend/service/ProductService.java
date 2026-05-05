@@ -29,8 +29,8 @@ import java.util.stream.Collectors;
 @Slf4j
 public class ProductService {
 
-    private static final int MAX_PRODUCT_IMAGES = 3;
-    private static final int MAX_IMAGE_URL_STORAGE_LENGTH = 500;
+    private static final int MAX_PRODUCT_IMAGES = 10;
+    private static final int MAX_IMAGE_URL_STORAGE_LENGTH = 2000;
     private static final int MAX_VIDEO_URL_STORAGE_LENGTH = 500;
 
     private final ProductRepository productRepository;

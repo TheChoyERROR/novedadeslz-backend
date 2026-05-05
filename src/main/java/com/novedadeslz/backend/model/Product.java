@@ -38,7 +38,7 @@ public class Product {
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal price;
 
-    @Column(name = "image_url", length = 500)
+    @Column(name = "image_url", length = 2000)
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
     private String imageUrl;
