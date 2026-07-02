@@ -260,7 +260,7 @@ public class OrderController {
         if (!sent) {
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(
                     ApiResponse.<Map<String, Object>>error(
-                            "No se pudo enviar el mensaje de prueba. Revisa la configuracion de Twilio y el sandbox."
+                            "No se pudo enviar el mensaje de prueba. Revisa la configuracion de CallMeBot (o Meta Cloud API)."
                     )
             );
         }

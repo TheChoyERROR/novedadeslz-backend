@@ -11,8 +11,6 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestClientException;
@@ -25,6 +23,15 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Locale;
 
+/**
+ * Envia notificaciones de WhatsApp al administrador.
+ *
+ * Proveedores soportados:
+ * - callmebot: gratuito y sin cuenta. El admin autoriza al bot una sola vez desde su
+ *   WhatsApp (ver https://www.callmebot.com/blog/free-api-whatsapp-messages/) y recibe
+ *   una API key. Solo sirve para auto-notificarse, que es exactamente este caso de uso.
+ * - meta: WhatsApp Cloud API oficial (requiere app de Meta y access token).
+ */
 @Service
 @Slf4j
 @RequiredArgsConstructor
@@ -41,6 +48,9 @@ public class WhatsAppNotificationService {
     @Value("${whatsapp.provider:auto}")
     private String provider;
 
+    @Value("${whatsapp.callmebot.api-key:}")
+    private String callMeBotApiKey;
+
     @Value("${whatsapp.cloud-api.access-token:}")
     private String accessToken;
 
@@ -49,21 +59,6 @@ public class WhatsAppNotificationService {
 
     @Value("${whatsapp.cloud-api.version:v22.0}")
     private String apiVersion;
-
-    @Value("${whatsapp.twilio.account-sid:}")
-    private String twilioAccountSid;
-
-    @Value("${whatsapp.twilio.auth-token:}")
-    private String twilioAuthToken;
-
-    @Value("${whatsapp.twilio.api-key-sid:}")
-    private String twilioApiKeySid;
-
-    @Value("${whatsapp.twilio.api-key-secret:}")
-    private String twilioApiKeySecret;
-
-    @Value("${whatsapp.twilio.from:whatsapp:+14155238886}")
-    private String twilioFrom;
 
     @Value("${app.admin-orders-url:http://localhost:3000/admin/orders}")
     private String adminOrdersUrl;
@@ -74,24 +69,21 @@ public class WhatsAppNotificationService {
     private final RestTemplate restTemplate = new RestTemplate();
 
     public boolean notifyAdminPaymentUnderReview(Order order) {
-        return sendAdminMessage(
-                buildAdminMessage(order),
-                hasPublicMediaUrl(order.getPaymentProof()) ? order.getPaymentProof() : null
-        );
+        return sendAdminMessage(buildAdminMessage(order));
     }
 
     public boolean sendAdminTestMessage() {
         String testMessage = String.join("\n",
-                "Prueba de WhatsApp Twilio",
+                "Prueba de notificaciones WhatsApp",
                 "Novedades LZ conecto correctamente las notificaciones.",
-                "Si recibes este mensaje, el sandbox esta listo para revisar pedidos.",
+                "Si recibes este mensaje, ya llegaran los avisos de pedidos por revisar.",
                 "Panel admin: " + normalizeAdminOrdersUrl()
         );
 
-        return sendAdminMessage(testMessage, null);
+        return sendAdminMessage(testMessage);
     }
 
-    private boolean sendAdminMessage(String messageBody, String mediaUrl) {
+    private boolean sendAdminMessage(String messageBody) {
         if (!notificationsEnabled) {
             log.info("Notificaciones WhatsApp deshabilitadas");
             return false;
@@ -104,24 +96,78 @@ public class WhatsAppNotificationService {
         }
 
         String activeProvider = normalizeProvider(provider);
-        if ("twilio".equals(activeProvider)) {
-            return sendViaTwilio(normalizedAdminPhone, messageBody, mediaUrl);
+        if ("callmebot".equals(activeProvider)) {
+            return sendViaCallMeBot(normalizedAdminPhone, messageBody);
         }
 
         if ("meta".equals(activeProvider)) {
             return sendViaMeta(normalizedAdminPhone, messageBody);
         }
 
-        if (isTwilioConfigured()) {
-            return sendViaTwilio(normalizedAdminPhone, messageBody, mediaUrl);
+        if (isCallMeBotConfigured()) {
+            return sendViaCallMeBot(normalizedAdminPhone, messageBody);
         }
 
         if (isMetaConfigured()) {
             return sendViaMeta(normalizedAdminPhone, messageBody);
         }
 
-        log.warn("No hay proveedor WhatsApp configurado. Configura Twilio o Meta Cloud API");
+        log.warn("No hay proveedor WhatsApp configurado. Configura CallMeBot o Meta Cloud API");
         return false;
+    }
+
+    private boolean sendViaCallMeBot(String normalizedAdminPhone, String messageBody) {
+        if (!isCallMeBotConfigured()) {
+            log.warn("CallMeBot no esta configurado. Falta la API key (WHATSAPP_CALLMEBOT_API_KEY)");
+            return false;
+        }
+
+        // encode() + buildAndExpand codifica estricto los valores (el "+" del telefono
+        // debe viajar como %2B para que CallMeBot no lo lea como espacio)
+        URI endpoint = UriComponentsBuilder.fromUriString("https://api.callmebot.com/whatsapp.php")
+                .queryParam("phone", "{phone}")
+                .queryParam("text", "{text}")
+                .queryParam("apikey", "{apikey}")
+                .encode()
+                .buildAndExpand("+" + normalizedAdminPhone, messageBody, callMeBotApiKey)
+                .toUri();
+
+        try {
+            ResponseEntity<String> response = restTemplate.getForEntity(endpoint, String.class);
+            String body = response.getBody() != null ? response.getBody() : "";
+
+            // CallMeBot responde 200 incluso en algunos errores; el detalle viene en el HTML
+            if (response.getStatusCode().is2xxSuccessful() && !containsCallMeBotError(body)) {
+                log.info("Notificacion WhatsApp enviada por CallMeBot al admin");
+                return true;
+            }
+
+            log.warn("CallMeBot no acepto la notificacion al admin: status={}, body={}",
+                    response.getStatusCode(), abbreviate(body));
+            return false;
+        } catch (RestClientResponseException e) {
+            log.error("CallMeBot rechazo la notificacion al admin: status={}, body={}",
+                    e.getStatusCode(), abbreviate(e.getResponseBodyAsString()));
+            return false;
+        } catch (RestClientException e) {
+            log.error("No se pudo enviar notificacion WhatsApp por CallMeBot al admin: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean containsCallMeBotError(String body) {
+        String normalized = body.toLowerCase(Locale.ROOT);
+        return normalized.contains("apikey is invalid")
+                || normalized.contains("api key is invalid")
+                || normalized.contains("phone number is invalid")
+                || normalized.contains("error");
+    }
+
+    private String abbreviate(String body) {
+        if (body == null) {
+            return "";
+        }
+        return body.length() > 300 ? body.substring(0, 300) + "..." : body;
     }
 
     private boolean sendViaMeta(String normalizedAdminPhone, String messageBody) {
@@ -166,54 +212,6 @@ public class WhatsAppNotificationService {
         }
     }
 
-    private boolean sendViaTwilio(String normalizedAdminPhone, String messageBody, String mediaUrl) {
-        if (!isTwilioConfigured()) {
-            log.warn("Twilio WhatsApp no esta configurado. Falta Account SID o credenciales");
-            return false;
-        }
-
-        String endpoint = String.format(
-                "https://api.twilio.com/2010-04-01/Accounts/%s/Messages.json",
-                twilioAccountSid
-        );
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-        headers.setBasicAuth(resolveTwilioUsername(), resolveTwilioPassword());
-
-        MultiValueMap<String, String> formData = new LinkedMultiValueMap<>();
-        formData.add("From", normalizeTwilioAddress(twilioFrom));
-        formData.add("To", normalizeTwilioAddress(normalizedAdminPhone));
-        formData.add("Body", messageBody);
-
-        if (hasPublicMediaUrl(mediaUrl)) {
-            formData.add("MediaUrl", mediaUrl);
-        }
-
-        try {
-            ResponseEntity<String> response = restTemplate.postForEntity(
-                    endpoint,
-                    new HttpEntity<>(formData, headers),
-                    String.class
-            );
-
-            if (response.getStatusCode().is2xxSuccessful()) {
-                log.info("Notificacion WhatsApp enviada por Twilio al admin");
-                return true;
-            }
-
-            log.warn("Twilio respondio con status {} al notificar al admin", response.getStatusCode());
-            return false;
-        } catch (RestClientResponseException e) {
-            log.error("Twilio rechazo la notificacion al admin: status={}, body={}",
-                    e.getStatusCode(), e.getResponseBodyAsString());
-            return false;
-        } catch (RestClientException e) {
-            log.error("No se pudo enviar notificacion WhatsApp por Twilio al admin: {}", e.getMessage());
-            return false;
-        }
-    }
-
     private Map<String, Object> buildTextMessagePayload(String to, String messageBody) {
         Map<String, Object> text = new LinkedHashMap<>();
         text.put("preview_url", false);
@@ -240,7 +238,9 @@ public class WhatsAppNotificationService {
                 "Telefono: " + order.getCustomerPhone(),
                 "Total: S/ " + order.getTotal(),
                 "Operacion OCR: " + operationNumber,
-                StringUtils.hasText(order.getPaymentProof()) ? "Comprobante: " + order.getPaymentProof() : "Comprobante: adjunto en panel admin",
+                hasPublicMediaUrl(order.getPaymentProof())
+                        ? "Comprobante: " + order.getPaymentProof()
+                        : "Comprobante: adjunto en panel admin",
                 "Aprobar ahora (" + jwtTokenProvider.getWhatsAppApprovalLinkExpirationMinutes() + " min): " + buildApprovalLink(order),
                 "Panel admin: " + normalizeAdminOrdersUrl()
         );
@@ -261,40 +261,12 @@ public class WhatsAppNotificationService {
         return candidate.trim().toLowerCase(Locale.ROOT);
     }
 
+    private boolean isCallMeBotConfigured() {
+        return StringUtils.hasText(callMeBotApiKey);
+    }
+
     private boolean isMetaConfigured() {
         return StringUtils.hasText(accessToken) && StringUtils.hasText(phoneNumberId);
-    }
-
-    private boolean isTwilioConfigured() {
-        return StringUtils.hasText(twilioAccountSid) &&
-                ((StringUtils.hasText(twilioApiKeySid) && StringUtils.hasText(twilioApiKeySecret)) ||
-                        StringUtils.hasText(twilioAuthToken));
-    }
-
-    private String resolveTwilioUsername() {
-        if (StringUtils.hasText(twilioApiKeySid) && StringUtils.hasText(twilioApiKeySecret)) {
-            return twilioApiKeySid;
-        }
-        return twilioAccountSid;
-    }
-
-    private String resolveTwilioPassword() {
-        if (StringUtils.hasText(twilioApiKeySid) && StringUtils.hasText(twilioApiKeySecret)) {
-            return twilioApiKeySecret;
-        }
-        return twilioAuthToken;
-    }
-
-    private String normalizeTwilioAddress(String phoneOrAddress) {
-        if (!StringUtils.hasText(phoneOrAddress)) {
-            return "";
-        }
-
-        if (phoneOrAddress.startsWith("whatsapp:")) {
-            return phoneOrAddress;
-        }
-
-        return "whatsapp:+" + normalizePhone(phoneOrAddress);
     }
 
     private boolean hasPublicMediaUrl(String url) {
