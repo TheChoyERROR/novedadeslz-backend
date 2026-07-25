@@ -2,7 +2,6 @@ package com.novedadeslz.backend.service;
 
 import com.novedadeslz.backend.model.Order;
 import com.novedadeslz.backend.security.JwtTokenProvider;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -35,13 +34,21 @@ import java.util.Locale;
  */
 @Service
 @Slf4j
-@RequiredArgsConstructor
 public class WhatsAppNotificationService {
 
     private final JwtTokenProvider jwtTokenProvider;
-
-    @Qualifier("notificationsRestTemplate")
     private final RestTemplate restTemplate;
+
+    /**
+     * Constructor explicito: ver la nota en {@link OcrService}. El qualifier no puede depender de
+     * que Lombok encuentre lombok.config, porque el build de Docker no lo copiaba.
+     */
+    public WhatsAppNotificationService(
+            JwtTokenProvider jwtTokenProvider,
+            @Qualifier("notificationsRestTemplate") RestTemplate restTemplate) {
+        this.jwtTokenProvider = jwtTokenProvider;
+        this.restTemplate = restTemplate;
+    }
 
     @Value("${whatsapp.notifications.enabled:true}")
     private boolean notificationsEnabled;

@@ -2,7 +2,6 @@ package com.novedadeslz.backend.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,7 +20,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class OcrService {
 
@@ -34,12 +32,25 @@ public class OcrService {
     @Value("${yape.recipient.name:Leslie Lopez}")
     private String expectedRecipientName;
 
-    @Qualifier("ocrRestTemplate")
     private final RestTemplate restTemplate;
-
     private final ObjectMapper objectMapper;
 
     private static final String OCR_API_URL = "https://api.ocr.space/parse/image";
+
+    /**
+     * Constructor explicito a proposito.
+     *
+     * <p>Con {@code @RequiredArgsConstructor}, que {@code @Qualifier} llegue al parametro depende
+     * de que Lombok encuentre {@code lombok.config}. El Dockerfile no copiaba ese archivo, asi que
+     * la imagen se construia sin el qualifier y el arranque fallaba con "expected single matching
+     * bean but found 2". Escribirlo a mano elimina esa dependencia invisible.
+     */
+    public OcrService(
+            @Qualifier("ocrRestTemplate") RestTemplate restTemplate,
+            ObjectMapper objectMapper) {
+        this.restTemplate = restTemplate;
+        this.objectMapper = objectMapper;
+    }
 
     /**
      * Analiza una imagen de comprobante de Yape usando OCR.space
