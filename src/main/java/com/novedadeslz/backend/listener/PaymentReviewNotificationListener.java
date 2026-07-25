@@ -14,7 +14,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
  * Envia la notificacion de WhatsApp fuera del request del cliente.
  *
  * <p>AFTER_COMMIT garantiza que el pedido ya esta guardado antes de avisar al admin, y {@code
- * @Async} evita que la latencia de Twilio o Meta se sume al tiempo de respuesta del cliente ni
+ * @Async} evita que la latencia de CallMeBot o Meta se sume al tiempo de respuesta del cliente ni
  * retenga una conexion de Oracle.
  */
 @Component

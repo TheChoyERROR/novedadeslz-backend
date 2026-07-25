@@ -9,7 +9,7 @@ import org.springframework.web.client.RestTemplate;
 import java.time.Duration;
 
 /**
- * RestTemplates para servicios externos (OCR.space, Twilio, Meta).
+ * RestTemplates para servicios externos (OCR.space, CallMeBot, Meta).
  *
  * <p>Un {@code new RestTemplate()} no tiene timeouts: si el proveedor deja de responder, el hilo
  * queda bloqueado indefinidamente. Como estas llamadas ocurren durante el flujo de pedidos, eso

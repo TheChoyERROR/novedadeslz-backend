@@ -1,7 +1,6 @@
 package com.novedadeslz.backend.service;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import com.novedadeslz.backend.security.JwtTokenProvider;
@@ -13,8 +12,6 @@ import static org.hamcrest.Matchers.containsString;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.client.ExpectedCount.once;
-import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
-import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
@@ -22,7 +19,7 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 class WhatsAppNotificationServiceTest {
 
     @Test
-    void sendAdminTestMessageShouldPostToTwilioWhenConfigured() {
+    void sendAdminTestMessageShouldCallCallMeBotWhenConfigured() {
         RestTemplate restTemplate = new RestTemplate();
         WhatsAppNotificationService service =
                 new WhatsAppNotificationService(new JwtTokenProvider(), restTemplate);
@@ -30,24 +27,42 @@ class WhatsAppNotificationServiceTest {
 
         ReflectionTestUtils.setField(service, "notificationsEnabled", true);
         ReflectionTestUtils.setField(service, "adminPhone", "+51939662630");
-        ReflectionTestUtils.setField(service, "provider", "twilio");
-        ReflectionTestUtils.setField(service, "twilioAccountSid", "AC123456789");
-        ReflectionTestUtils.setField(service, "twilioAuthToken", "secret-token");
-        ReflectionTestUtils.setField(service, "twilioFrom", "whatsapp:+14155238886");
+        ReflectionTestUtils.setField(service, "provider", "callmebot");
+        ReflectionTestUtils.setField(service, "callMeBotApiKey", "123456");
         ReflectionTestUtils.setField(service, "adminOrdersUrl", "https://novedadezlz.vercel.app/admin/orders");
 
-        server.expect(once(), requestTo("https://api.twilio.com/2010-04-01/Accounts/AC123456789/Messages.json"))
-                .andExpect(method(HttpMethod.POST))
-                .andExpect(header(HttpHeaders.AUTHORIZATION, containsString("Basic ")))
-                .andExpect(header(HttpHeaders.CONTENT_TYPE, containsString(MediaType.APPLICATION_FORM_URLENCODED_VALUE)))
-                .andExpect(content().string(containsString("From=whatsapp%3A%2B14155238886")))
-                .andExpect(content().string(containsString("To=whatsapp%3A%2B51939662630")))
-                .andExpect(content().string(containsString("Prueba+de+WhatsApp+Twilio")))
-                .andRespond(withSuccess("{\"sid\":\"MM123\"}", MediaType.APPLICATION_JSON));
+        server.expect(once(), requestTo(containsString("https://api.callmebot.com/whatsapp.php")))
+                .andExpect(requestTo(containsString("phone=%2B51939662630")))
+                .andExpect(requestTo(containsString("apikey=123456")))
+                .andExpect(requestTo(containsString("Prueba%20de%20notificaciones%20WhatsApp")))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess("Message queued. You will receive it in a few seconds.", MediaType.TEXT_HTML));
 
         boolean sent = service.sendAdminTestMessage();
 
         assertTrue(sent);
+        server.verify();
+    }
+
+    @Test
+    void sendAdminTestMessageShouldReturnFalseWhenCallMeBotReportsInvalidApiKey() {
+        RestTemplate restTemplate = new RestTemplate();
+        WhatsAppNotificationService service =
+                new WhatsAppNotificationService(new JwtTokenProvider(), restTemplate);
+        MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
+
+        ReflectionTestUtils.setField(service, "notificationsEnabled", true);
+        ReflectionTestUtils.setField(service, "adminPhone", "+51939662630");
+        ReflectionTestUtils.setField(service, "provider", "callmebot");
+        ReflectionTestUtils.setField(service, "callMeBotApiKey", "bad-key");
+
+        server.expect(once(), requestTo(containsString("https://api.callmebot.com/whatsapp.php")))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess("APIKey is invalid", MediaType.TEXT_HTML));
+
+        boolean sent = service.sendAdminTestMessage();
+
+        assertFalse(sent);
         server.verify();
     }
 

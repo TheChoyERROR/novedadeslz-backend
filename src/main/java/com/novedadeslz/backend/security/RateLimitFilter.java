@@ -41,12 +41,11 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private static final List<Rule> RULES = List.of(
             // Fuerza bruta de credenciales.
             new Rule("login", "POST", "/api/auth/login", 10, Duration.ofMinutes(15)),
-            new Rule("register", "POST", "/api/auth/register", 5, Duration.ofHours(1)),
             // Enumeracion de pedidos ajenos.
             new Rule("track", "POST", "/api/orders/track", 15, Duration.ofMinutes(15)),
             // Creacion masiva de pedidos basura.
             new Rule("create-order", "POST", "/api/orders", 20, Duration.ofHours(1)),
-            // Cada subida consume cuota de OCR, de Cloudinary y saldo de Twilio.
+            // Cada subida consume cuota de OCR, de Cloudinary y del proveedor de WhatsApp.
             new Rule("yape-proof", "POST", "/api/orders/*/yape-proof", 10, Duration.ofHours(1))
     );
 

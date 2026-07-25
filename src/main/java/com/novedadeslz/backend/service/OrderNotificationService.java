@@ -13,7 +13,7 @@ import java.util.Optional;
  *
  * <p>Este metodo <strong>no</strong> es transaccional a proposito. Cada llamada al repositorio abre
  * su propia transaccion corta (Spring Data las anota internamente), de modo que la espera por
- * Twilio o Meta ocurre sin ninguna conexion de Oracle tomada. Anotar el metodo completo devolveria
+ * CallMeBot o Meta ocurre sin ninguna conexion de Oracle tomada. Anotar el metodo completo devolveria
  * exactamente el problema que este refactor elimina.
  *
  * <p>El pedido queda desconectado durante el envio, lo cual es seguro porque el mensaje solo lee
