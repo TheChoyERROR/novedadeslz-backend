@@ -108,6 +108,41 @@ class OrderResilienceTest {
     }
 
     @Test
+    void createOrderShouldRequireAddressWhenShipping() {
+        OrderRequest request = buildOrderRequest();
+        request.setCustomerAddress("");
+        request.setCustomerCity("");
+
+        BadRequestException exception = assertThrows(
+                BadRequestException.class,
+                () -> orderService.createOrder(request)
+        );
+
+        assertEquals(
+                "Indica la direccion y la ciudad de envio, o elige recojo en tienda",
+                exception.getMessage()
+        );
+    }
+
+    @Test
+    void createOrderShouldAllowPickupWithoutAddress() {
+        stubProduct();
+        when(orderRepository.countByOrderNumberStartingWith(anyString())).thenReturn(0L);
+        when(orderRepository.saveAndFlush(any(Order.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        OrderRequest request = buildOrderRequest();
+        // Recojo en tienda: el cliente pasa por el local, no hay a donde enviar.
+        request.setPaymentMethod("cash");
+        request.setCustomerAddress(null);
+        request.setCustomerCity(null);
+
+        OrderResponse response = orderService.createOrder(request);
+
+        assertEquals("ORD-" + today() + "-0001", response.getOrderNumber());
+    }
+
+    @Test
     void createOrderShouldFailGracefullyWhenCollisionsPersist() {
         stubProduct();
         when(orderRepository.countByOrderNumberStartingWith(anyString())).thenReturn(0L);

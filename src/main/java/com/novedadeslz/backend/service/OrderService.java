@@ -44,6 +44,12 @@ public class OrderService {
     /** Reintentos ante colision del correlativo diario de numero de pedido. */
     private static final int MAX_ORDER_NUMBER_ATTEMPTS = 4;
 
+    /**
+     * El cliente pasa por el local y paga en efectivo al retirar. El campo se llama
+     * paymentMethod por historia, pero en la practica tambien define como recibe el pedido.
+     */
+    private static final String PICKUP_PAYMENT_METHOD = "cash";
+
     private final OrderRepository orderRepository;
     private final ProductRepository productRepository;
     private final ModelMapper modelMapper;
@@ -93,6 +99,8 @@ public class OrderService {
         if (request.getItems() == null || request.getItems().isEmpty()) {
             throw new BadRequestException("El pedido debe tener al menos un producto");
         }
+
+        requireAddressWhenShipping(request);
 
         Order order = Order.builder()
                 .orderNumber(generateOrderNumber())
@@ -633,6 +641,23 @@ public class OrderService {
 
         if (!ocrResult.isBasicSignalsDetected()) {
             appendNote(order, "OCR no detecto senales basicas de comprobante Yape. Revisar imagen manualmente.");
+        }
+    }
+
+    /**
+     * Los pedidos de recojo en tienda no llevan direccion: el cliente pasa por el local. Los de
+     * envio si, y sin esta validacion un pedido podia guardarse sin a donde mandarlo.
+     */
+    private void requireAddressWhenShipping(OrderRequest request) {
+        if (PICKUP_PAYMENT_METHOD.equalsIgnoreCase(request.getPaymentMethod())) {
+            return;
+        }
+
+        if (!StringUtils.hasText(request.getCustomerAddress())
+                || !StringUtils.hasText(request.getCustomerCity())) {
+            throw new BadRequestException(
+                    "Indica la direccion y la ciudad de envio, o elige recojo en tienda"
+            );
         }
     }
 
