@@ -78,7 +78,10 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.POST, "/api/orders").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/orders/track").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/orders/{id}").permitAll()
+                // El GET solo muestra la confirmacion; el POST ejecuta la aprobacion. Ambos se
+                // autorizan con el token firmado que valida OrderService, no con sesion.
                 .requestMatchers(HttpMethod.GET, "/api/orders/*/approve-from-whatsapp").permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/orders/*/approve-from-whatsapp").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/orders/{id}/yape-proof").permitAll()
 
                 // Swagger

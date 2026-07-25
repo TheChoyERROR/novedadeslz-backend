@@ -42,14 +42,30 @@ class JwtTokenProviderTest {
 
     @Test
     void shouldGenerateAndValidateWhatsAppApprovalToken() {
+        JwtTokenProvider provider = providerWithValidSecret();
+
+        String proofUrl = "https://cdn.example.com/comprobante-a.png";
+        String token = provider.generateWhatsAppApprovalToken(21L, proofUrl);
+
+        assertTrue(provider.validateWhatsAppApprovalToken(token, 21L, proofUrl));
+        assertFalse(provider.validateWhatsAppApprovalToken(token, 22L, proofUrl));
+    }
+
+    @Test
+    void approvalTokenShouldStopWorkingWhenTheCustomerUploadsANewProof() {
+        JwtTokenProvider provider = providerWithValidSecret();
+
+        String token = provider.generateWhatsAppApprovalToken(21L, "https://cdn.example.com/vieja.png");
+
+        // Un enlace reenviado no debe poder aprobar un comprobante distinto del que se reviso.
+        assertFalse(provider.validateWhatsAppApprovalToken(
+                token, 21L, "https://cdn.example.com/nueva.png"));
+    }
+
+    private JwtTokenProvider providerWithValidSecret() {
         JwtTokenProvider provider = new JwtTokenProvider();
-        ReflectionTestUtils.setField(provider, "jwtSecret",
-                "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
+        ReflectionTestUtils.setField(provider, "jwtSecret", VALID_SECRET);
         ReflectionTestUtils.setField(provider, "whatsappApprovalLinkExpirationMinutes", 20L);
-
-        String token = provider.generateWhatsAppApprovalToken(21L);
-
-        assertTrue(provider.validateWhatsAppApprovalToken(token, 21L));
-        assertFalse(provider.validateWhatsAppApprovalToken(token, 22L));
+        return provider;
     }
 }

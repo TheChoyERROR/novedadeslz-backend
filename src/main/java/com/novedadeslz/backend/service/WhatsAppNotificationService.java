@@ -243,7 +243,7 @@ public class WhatsAppNotificationService {
                 "Total: S/ " + order.getTotal(),
                 "Operacion OCR: " + operationNumber,
                 StringUtils.hasText(order.getPaymentProof()) ? "Comprobante: " + order.getPaymentProof() : "Comprobante: adjunto en panel admin",
-                "Aprobar ahora (" + jwtTokenProvider.getWhatsAppApprovalLinkExpirationMinutes() + " min): " + buildApprovalLink(order),
+                "Revisar y aprobar (" + jwtTokenProvider.getWhatsAppApprovalLinkExpirationMinutes() + " min): " + buildApprovalLink(order),
                 "Panel admin: " + normalizeAdminOrdersUrl()
         );
     }
@@ -341,7 +341,10 @@ public class WhatsAppNotificationService {
     }
 
     private String buildApprovalLink(Order order) {
-        String token = jwtTokenProvider.generateWhatsAppApprovalToken(order.getId());
+        String token = jwtTokenProvider.generateWhatsAppApprovalToken(
+                order.getId(),
+                order.getPaymentProof()
+        );
         return UriComponentsBuilder.fromUriString(normalizePublicBaseUrl())
                 .path("/api/orders/{id}/approve-from-whatsapp")
                 .queryParam("token", token)

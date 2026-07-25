@@ -11,6 +11,7 @@ import com.novedadeslz.backend.model.OrderItem;
 import com.novedadeslz.backend.model.Product;
 import com.novedadeslz.backend.repository.OrderRepository;
 import com.novedadeslz.backend.repository.ProductRepository;
+import com.novedadeslz.backend.security.JwtTokenProvider;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.modelmapper.ModelMapper;
@@ -49,6 +50,7 @@ public class OrderService {
     private final CloudinaryService cloudinaryService;
     private final OcrService ocrService;
     private final OrderNotificationService orderNotificationService;
+    private final JwtTokenProvider jwtTokenProvider;
     private final ApplicationEventPublisher eventPublisher;
     private final TransactionTemplate transactionTemplate;
 
@@ -198,7 +200,7 @@ public class OrderService {
      * Busqueda publica de rastreo: numero de pedido + telefono con el que se registro.
      * Se responde siempre con el mismo error generico para no revelar que numeros existen.
      */
-    @Transactional(readOnly = true)
+    @Transactional
     public OrderResponse trackOrder(String orderNumber, String customerPhone) {
         String normalizedOrderNumber = orderNumber == null ? "" : orderNumber.trim();
 
@@ -208,7 +210,24 @@ public class OrderService {
                         "No encontramos un pedido con ese numero y telefono"
                 ));
 
-        return mapToResponse(order, false);
+        return mapToResponse(ensurePublicToken(order), false);
+    }
+
+    /**
+     * Los pedidos anteriores a la migracion, y los creados en la ventana entre el backfill y el
+     * despliegue, no tienen token. En vez de dejarlos inaccesibles para su duenno, se les asigna
+     * uno la primera vez que se identifican con numero de pedido y telefono.
+     */
+    private Order ensurePublicToken(Order order) {
+        if (StringUtils.hasText(order.getPublicToken())) {
+            return order;
+        }
+
+        order.setPublicToken(UUID.randomUUID().toString());
+        log.info("Se asigno token de acceso al pedido {} (creado antes de la migracion)",
+                order.getOrderNumber());
+
+        return orderRepository.save(order);
     }
 
     private Order requireOrderOwnedByCustomer(Long id, String publicToken) {
@@ -442,14 +461,42 @@ public class OrderService {
         return mapToResponse(updatedOrder, true);
     }
 
-    @Transactional
-    public OrderResponse approveOrderPaymentFromWhatsApp(Long orderId) {
+    /**
+     * Lectura para la pantalla de confirmacion del enlace de WhatsApp. No modifica nada: el enlace
+     * llega por un canal donde los previsualizadores hacen GET automatico.
+     */
+    @Transactional(readOnly = true)
+    public OrderResponse getOrderForWhatsAppApproval(Long orderId, String token) {
+        return mapToResponse(requireValidWhatsAppApproval(orderId, token), true);
+    }
+
+    /**
+     * Valida que el enlace corresponda al pedido <em>y</em> al comprobante que se esta revisando.
+     * Un enlace emitido para una captura anterior deja de servir aunque siga vigente.
+     */
+    private Order requireValidWhatsAppApproval(Long orderId, String token) {
         Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new ResourceNotFoundException("Pedido no encontrado con ID: " + orderId));
+                .orElseThrow(() -> new BadRequestException(
+                        "Pide un nuevo enlace desde el panel admin o revisa el pedido manualmente."
+                ));
+
+        if (!jwtTokenProvider.validateWhatsAppApprovalToken(token, orderId, order.getPaymentProof())) {
+            throw new BadRequestException(
+                    "El enlace expiro o el cliente subio un comprobante nuevo. " +
+                            "Revisa el pedido desde el panel admin."
+            );
+        }
 
         if (order.getStatus() != Order.OrderStatus.PAYMENT_REVIEW) {
             throw new BadRequestException("El pedido ya no esta pendiente de revision");
         }
+
+        return order;
+    }
+
+    @Transactional
+    public OrderResponse approveOrderPaymentFromWhatsApp(Long orderId, String token) {
+        Order order = requireValidWhatsAppApproval(orderId, token);
 
         Order.OrderStatus oldStatus = order.getStatus();
         order.setStatus(Order.OrderStatus.CONFIRMED);

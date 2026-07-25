@@ -11,7 +11,10 @@ import org.springframework.util.StringUtils;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Date;
+import java.util.HexFormat;
 
 @Component
 public class JwtTokenProvider {
@@ -80,7 +83,12 @@ public class JwtTokenProvider {
             .compact();
     }
 
-    public String generateWhatsAppApprovalToken(Long orderId) {
+    /**
+     * El token queda atado al comprobante concreto que se esta revisando. Si el cliente sube una
+     * captura nueva, el enlace anterior deja de servir aunque no haya expirado: evita que un
+     * mensaje reenviado apruebe un comprobante distinto del que se reviso.
+     */
+    public String generateWhatsAppApprovalToken(Long orderId, String paymentProofUrl) {
         Date now = new Date();
         Date expiryDate = new Date(now.getTime() + (whatsappApprovalLinkExpirationMinutes * 60_000));
 
@@ -88,13 +96,17 @@ public class JwtTokenProvider {
                 .setSubject("whatsapp-approval")
                 .claim("action", "approve-payment")
                 .claim("orderId", orderId)
+                .claim("proof", fingerprintOf(paymentProofUrl))
                 .setIssuedAt(now)
                 .setExpiration(expiryDate)
                 .signWith(getSigningKey(), SignatureAlgorithm.HS512)
                 .compact();
     }
 
-    public boolean validateWhatsAppApprovalToken(String token, Long expectedOrderId) {
+    public boolean validateWhatsAppApprovalToken(
+            String token,
+            Long expectedOrderId,
+            String currentPaymentProofUrl) {
         try {
             Claims claims = Jwts.parser()
                     .verifyWith(getSigningKey())
@@ -105,13 +117,28 @@ public class JwtTokenProvider {
             String subject = claims.getSubject();
             String action = claims.get("action", String.class);
             Number orderIdClaim = claims.get("orderId", Number.class);
+            String proofClaim = claims.get("proof", String.class);
 
             return "whatsapp-approval".equals(subject) &&
                     "approve-payment".equals(action) &&
                     orderIdClaim != null &&
-                    expectedOrderId.equals(orderIdClaim.longValue());
+                    expectedOrderId.equals(orderIdClaim.longValue()) &&
+                    fingerprintOf(currentPaymentProofUrl).equals(proofClaim);
         } catch (JwtException | IllegalArgumentException ex) {
             return false;
+        }
+    }
+
+    /** Hash corto de la URL del comprobante; no hace falta guardar la URL completa en el token. */
+    private String fingerprintOf(String paymentProofUrl) {
+        String value = paymentProofUrl == null ? "" : paymentProofUrl;
+
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest).substring(0, 16);
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 no disponible en esta JVM", ex);
         }
     }
 

@@ -38,6 +38,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.beans.factory.annotation.Value;
 
@@ -60,6 +61,9 @@ public class OrderController {
 
     @Value("${app.admin-orders-url:http://localhost:3000/admin/orders}")
     private String adminOrdersUrl;
+
+    @Value("${app.public-base-url:http://localhost:8080}")
+    private String publicBaseUrl;
 
     @PostMapping
     @Operation(summary = "Crear nuevo pedido (publico)")
@@ -223,40 +227,69 @@ public class OrderController {
         );
     }
 
+    /**
+     * Pagina de confirmacion. Es deliberadamente un GET sin efectos: los previsualizadores de
+     * enlaces de WhatsApp, los antivirus corporativos y los reenvios hacen GET automatico, y
+     * cuando esta URL aprobaba directamente bastaba con eso para confirmar un pago que nadie
+     * habia revisado. La aprobacion real ocurre en el POST de abajo.
+     */
     @GetMapping(value = "/{id}/approve-from-whatsapp", produces = MediaType.TEXT_HTML_VALUE)
-    @Operation(summary = "Aprobar pedido desde enlace firmado de WhatsApp")
+    @Operation(summary = "Mostrar confirmacion de aprobacion desde enlace firmado de WhatsApp")
+    public ResponseEntity<String> showWhatsAppApprovalConfirmation(
+            @PathVariable Long id,
+            @RequestParam("token") String token) {
+
+        OrderResponse order;
+        try {
+            order = orderService.getOrderForWhatsAppApproval(id, token);
+        } catch (ResourceNotFoundException | BadRequestException ex) {
+            return htmlResponse(HttpStatus.BAD_REQUEST, buildWhatsAppActionPage(
+                    false,
+                    "Enlace invalido o expirado",
+                    ex.getMessage()
+            ));
+        }
+
+        return htmlResponse(HttpStatus.OK, buildWhatsAppConfirmationPage(order, token));
+    }
+
+    @PostMapping(value = "/{id}/approve-from-whatsapp", produces = MediaType.TEXT_HTML_VALUE)
+    @Operation(summary = "Confirmar la aprobacion del pedido desde el enlace de WhatsApp")
     public ResponseEntity<String> approveFromWhatsApp(
             @PathVariable Long id,
             @RequestParam("token") String token) {
 
-        if (!jwtTokenProvider.validateWhatsAppApprovalToken(token, id)) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .contentType(MediaType.TEXT_HTML)
-                    .body(buildWhatsAppActionPage(
-                            false,
-                            "Enlace invalido o expirado",
-                            "Pide un nuevo enlace desde el panel admin o revisa el pedido manualmente."
-                    ));
-        }
-
         try {
-            OrderResponse order = orderService.approveOrderPaymentFromWhatsApp(id);
-            return ResponseEntity.ok()
-                    .contentType(MediaType.TEXT_HTML)
-                    .body(buildWhatsAppActionPage(
-                            true,
-                            "Pedido aprobado",
-                            "El pedido " + order.getOrderNumber() + " fue confirmado correctamente."
-                    ));
+            OrderResponse order = orderService.approveOrderPaymentFromWhatsApp(id, token);
+            return htmlResponse(HttpStatus.OK, buildWhatsAppActionPage(
+                    true,
+                    "Pedido aprobado",
+                    "El pedido " + order.getOrderNumber() + " fue confirmado correctamente."
+            ));
         } catch (ResourceNotFoundException | BadRequestException ex) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .contentType(MediaType.TEXT_HTML)
-                    .body(buildWhatsAppActionPage(
-                            false,
-                            "No se pudo aprobar el pedido",
-                            ex.getMessage()
-                    ));
+            return htmlResponse(HttpStatus.BAD_REQUEST, buildWhatsAppActionPage(
+                    false,
+                    "No se pudo aprobar el pedido",
+                    ex.getMessage()
+            ));
+        } catch (IllegalStateException ex) {
+            // Tipicamente stock agotado mientras el pedido esperaba revision.
+            return htmlResponse(HttpStatus.CONFLICT, buildWhatsAppActionPage(
+                    false,
+                    "No se pudo aprobar el pedido",
+                    ex.getMessage()
+            ));
         }
+    }
+
+    private ResponseEntity<String> htmlResponse(HttpStatus status, String body) {
+        return ResponseEntity.status(status)
+                .contentType(MediaType.TEXT_HTML)
+                // Que ningun intermediario cachee una pagina que contiene un token de aprobacion.
+                .header("Cache-Control", "no-store")
+                .header("Referrer-Policy", "no-referrer")
+                .header("X-Robots-Tag", "noindex, nofollow")
+                .body(body);
     }
 
     @PostMapping("/{id}/resend-whatsapp-notification")
@@ -313,6 +346,97 @@ public class OrderController {
                         .anyMatch(authority -> "ROLE_ADMIN".equals(authority.getAuthority()));
     }
 
+    /**
+     * Resumen del pedido y un unico boton que envia el POST. El admin ve que esta aprobando antes
+     * de confirmar, en vez de enterarse despues.
+     */
+    private String buildWhatsAppConfirmationPage(OrderResponse order, String token) {
+        String proofBlock = StringUtils.hasText(order.getPaymentProof())
+                ? "<img class=\"proof\" src=\"%s\" alt=\"Comprobante del pedido\">"
+                        .formatted(escapeHtml(order.getPaymentProof()))
+                : "<p class=\"muted\">Este pedido no tiene comprobante adjunto.</p>";
+
+        String operationNumber = StringUtils.hasText(order.getOperationNumber())
+                ? escapeHtml(order.getOperationNumber())
+                : "sin confirmar";
+
+        return """
+                <!doctype html>
+                <html lang="es">
+                <head>
+                  <meta charset="utf-8">
+                  <meta name="viewport" content="width=device-width, initial-scale=1">
+                  <meta name="robots" content="noindex, nofollow">
+                  <title>Revisar pedido %s</title>
+                  <style>
+                    body { font-family: Arial, sans-serif; background: #120914; color: #f7eefe; margin: 0; padding: 32px 20px; }
+                    .card { max-width: 560px; margin: 0 auto; background: #231127; border: 1px solid #4a2350; border-radius: 18px; padding: 28px; }
+                    .badge { display: inline-block; background: #2563eb; color: #fff; padding: 8px 14px; border-radius: 999px; font-size: 14px; font-weight: 700; }
+                    h1 { margin: 18px 0 12px; font-size: 26px; }
+                    dl { margin: 20px 0; }
+                    dt { color: #c4a9cf; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; margin-top: 14px; }
+                    dd { margin: 4px 0 0; font-size: 17px; font-weight: 600; }
+                    .proof { width: 100%%; max-height: 420px; object-fit: contain; border-radius: 12px; background: #150c18; margin-top: 18px; }
+                    .muted { color: #c4a9cf; }
+                    button { width: 100%%; margin-top: 24px; background: #1f9d55; color: #fff; border: 0; font-size: 17px; font-weight: 700; padding: 16px; border-radius: 12px; cursor: pointer; }
+                    a.secondary { display: block; text-align: center; margin-top: 14px; color: #f7a8db; }
+                  </style>
+                </head>
+                <body>
+                  <div class="card">
+                    <span class="badge">Pendiente de tu revision</span>
+                    <h1>Revisa antes de aprobar</h1>
+                    <dl>
+                      <dt>Pedido</dt><dd>%s</dd>
+                      <dt>Cliente</dt><dd>%s</dd>
+                      <dt>Total</dt><dd>S/ %s</dd>
+                      <dt>Numero de operacion</dt><dd>%s</dd>
+                    </dl>
+                    %s
+                    <form method="post" action="%s/api/orders/%d/approve-from-whatsapp">
+                      <input type="hidden" name="token" value="%s">
+                      <button type="submit">Confirmar aprobacion</button>
+                    </form>
+                    <a class="secondary" href="%s">Prefiero revisarlo en el panel admin</a>
+                  </div>
+                </body>
+                </html>
+                """.formatted(
+                        escapeHtml(order.getOrderNumber()),
+                        escapeHtml(order.getOrderNumber()),
+                        escapeHtml(order.getCustomerName()),
+                        order.getTotal(),
+                        operationNumber,
+                        proofBlock,
+                        escapeHtml(normalizePublicBaseUrl()),
+                        order.getId(),
+                        escapeHtml(token),
+                        escapeHtml(adminOrdersUrl)
+                );
+    }
+
+    private String normalizePublicBaseUrl() {
+        if (!StringUtils.hasText(publicBaseUrl)) {
+            return "";
+        }
+        return publicBaseUrl.endsWith("/")
+                ? publicBaseUrl.substring(0, publicBaseUrl.length() - 1)
+                : publicBaseUrl;
+    }
+
+    /** El token y los datos del cliente se interpolan en HTML, asi que hay que escaparlos. */
+    private String escapeHtml(String value) {
+        if (value == null) {
+            return "";
+        }
+
+        return value.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&#39;");
+    }
+
     private String buildWhatsAppActionPage(boolean success, String title, String message) {
         String accentColor = success ? "#1f9d55" : "#c2410c";
         String badgeText = success ? "Aprobado" : "Revisar";
@@ -342,6 +466,8 @@ public class OrderController {
                   </div>
                 </body>
                 </html>
-                """.formatted(title, accentColor, badgeText, title, message, adminOrdersUrl);
+                """.formatted(
+                        escapeHtml(title), accentColor, badgeText,
+                        escapeHtml(title), escapeHtml(message), escapeHtml(adminOrdersUrl));
     }
 }
