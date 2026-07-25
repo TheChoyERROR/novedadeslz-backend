@@ -1,6 +1,5 @@
 package com.novedadeslz.backend.service;
 
-import com.novedadeslz.backend.dto.request.RegisterRequest;
 import com.novedadeslz.backend.dto.response.AuthResponse;
 import com.novedadeslz.backend.model.User;
 import com.novedadeslz.backend.repository.UserRepository;
@@ -43,43 +42,6 @@ class UserServiceTest {
     @InjectMocks
     private UserService userService;
 
-    @Test
-    void registerShouldCreateRegularUserRole() {
-        RegisterRequest request = new RegisterRequest();
-        request.setEmail("cliente@novedadeslz.com");
-        request.setPassword("Secreta123");
-        request.setFullName("Cliente Demo");
-        request.setPhone("+51912345678");
-
-        Authentication authentication = new UsernamePasswordAuthenticationToken(
-                request.getEmail(),
-                request.getPassword()
-        );
-
-        when(userRepository.existsByEmail(request.getEmail())).thenReturn(false);
-        when(passwordEncoder.encode(request.getPassword())).thenReturn("hashed-password");
-        when(authenticationManager.authenticate(any(Authentication.class))).thenReturn(authentication);
-        when(jwtTokenProvider.generateToken(authentication)).thenReturn("jwt-token");
-        when(jwtTokenProvider.getExpirationMs()).thenReturn(86400000L);
-        when(userRepository.save(any(User.class))).thenAnswer(invocation -> {
-            User user = invocation.getArgument(0);
-            user.setId(99L);
-            return user;
-        });
-
-        AuthResponse response = userService.register(request);
-
-        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
-        verify(userRepository).save(userCaptor.capture());
-
-        User savedUser = userCaptor.getValue();
-
-        assertEquals(User.Role.USER, savedUser.getRole());
-        assertEquals(User.Role.USER.name(), response.getUser().getRole());
-        assertEquals("jwt-token", response.getToken());
-        assertEquals(86400L, response.getExpiresIn());
-        assertNotNull(response.getUser());
-    }
 
     @Test
     void userBuilderShouldDefaultToUserRole() {

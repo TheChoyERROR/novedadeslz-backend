@@ -1,7 +1,6 @@
 package com.novedadeslz.backend.controller;
 
 import com.novedadeslz.backend.dto.request.LoginRequest;
-import com.novedadeslz.backend.dto.request.RegisterRequest;
 import com.novedadeslz.backend.dto.response.ApiResponse;
 import com.novedadeslz.backend.dto.response.AuthResponse;
 import com.novedadeslz.backend.service.UserService;
@@ -10,7 +9,6 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -24,17 +22,9 @@ public class AuthController {
 
     private final UserService userService;
 
-    @PostMapping("/register")
-    @Operation(summary = "Registrar nuevo usuario")
-    public ResponseEntity<ApiResponse<AuthResponse>> register(
-            @Valid @RequestBody RegisterRequest request) {
-
-        AuthResponse response = userService.register(request);
-
-        return ResponseEntity
-                .status(HttpStatus.CREATED)
-                .body(ApiResponse.success("Usuario registrado exitosamente", response));
-    }
+    // El registro publico se retiro: la tienda vende sin cuenta y un rol USER no habilitaba nada
+    // (todos los endpoints protegidos exigen ADMIN). El unico usuario que hace falta es el
+    // administrador, que se crea con las variables APP_BOOTSTRAP_ADMIN_*.
 
     @PostMapping("/login")
     @Operation(summary = "Iniciar sesión")
