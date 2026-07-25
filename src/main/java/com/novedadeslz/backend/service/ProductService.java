@@ -53,7 +53,7 @@ public class ProductService {
                     .name(request.getName())
                     .description(request.getDescription())
                     .price(request.getPrice())
-                    .category(request.getCategory())
+                    .category(normalizeCategory(request.getCategory()))
                     .stock(resolveStockValue(request))
                     .trackInventory(resolveTrackInventory(request))
                     .active(true)
@@ -154,7 +154,7 @@ public class ProductService {
         product.setName(request.getName());
         product.setDescription(request.getDescription());
         product.setPrice(request.getPrice());
-        product.setCategory(request.getCategory());
+        product.setCategory(normalizeCategory(request.getCategory()));
         product.setTrackInventory(resolveTrackInventory(request));
         product.setStock(resolveStockValue(request));
 
@@ -326,6 +326,20 @@ public class ProductService {
         if (videoUrl != null && videoUrl.length() > MAX_VIDEO_URL_STORAGE_LENGTH) {
             throw new IllegalArgumentException("El video excede el espacio disponible del producto.");
         }
+    }
+
+    /**
+     * Un espacio invisible al final convertia "Nuevo" y "Nuevo " en dos categorias distintas: el
+     * filtro del catalogo mostraba dos opciones identicas a la vista, cada una con solo una parte
+     * de los productos.
+     */
+    private String normalizeCategory(String category) {
+        if (!StringUtils.hasText(category)) {
+            return null;
+        }
+
+        // Colapsa ademas los espacios internos repetidos ("Utiles  escolares").
+        return category.trim().replaceAll("\\s+", " ");
     }
 
     private boolean resolveTrackInventory(ProductRequest request) {
