@@ -3,6 +3,7 @@ package com.novedadeslz.backend.repository;
 import com.novedadeslz.backend.model.Order;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -14,13 +15,33 @@ import java.util.Optional;
 @Repository
 public interface OrderRepository extends JpaRepository<Order, Long> {
 
+    /**
+     * Los listados mapean los items de cada pedido, asi que sin este grafo Hibernate emite una
+     * consulta extra por pedido. Con 100 pedidos por pagina eso eran ~100 viajes de ida y vuelta a
+     * Oracle, que desde Render cruzan medio continente.
+     */
+    String ITEMS_GRAPH = "Order.items";
+
     Optional<Order> findByOrderNumber(String orderNumber);
 
+    Optional<Order> findByOrderNumberIgnoreCase(String orderNumber);
+
+    @EntityGraph(value = ITEMS_GRAPH, type = EntityGraph.EntityGraphType.LOAD)
     Page<Order> findByStatus(Order.OrderStatus status, Pageable pageable);
 
+    @EntityGraph(value = ITEMS_GRAPH, type = EntityGraph.EntityGraphType.LOAD)
     Page<Order> findByCustomerPhoneContaining(String phone, Pageable pageable);
 
+    @EntityGraph(value = ITEMS_GRAPH, type = EntityGraph.EntityGraphType.LOAD)
     Page<Order> findByCreatedAtBetween(LocalDateTime start, LocalDateTime end, Pageable pageable);
+
+    @Override
+    @EntityGraph(value = ITEMS_GRAPH, type = EntityGraph.EntityGraphType.LOAD)
+    Page<Order> findAll(Pageable pageable);
+
+    @Override
+    @EntityGraph(value = ITEMS_GRAPH, type = EntityGraph.EntityGraphType.LOAD)
+    Optional<Order> findById(Long id);
 
     boolean existsByOperationNumber(String operationNumber);
 

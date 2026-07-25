@@ -1,6 +1,7 @@
 package com.novedadeslz.backend.exception;
 
 import com.novedadeslz.backend.dto.response.ApiResponse;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -19,8 +20,10 @@ import org.springframework.web.multipart.MultipartException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Locale;
+import java.util.UUID;
 
 @RestControllerAdvice
+@Slf4j
 public class GlobalExceptionHandler {
 
     @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
@@ -107,6 +110,35 @@ public class GlobalExceptionHandler {
             BadRequestException ex) {
         return ResponseEntity
             .status(HttpStatus.BAD_REQUEST)
+            .body(ApiResponse.<Void>builder()
+                .success(false)
+                .message(ex.getMessage())
+                .build());
+    }
+
+    /**
+     * Los servicios de producto usan IllegalArgumentException para las validaciones de negocio
+     * ("selecciona al menos una imagen", "hasta 20 imagenes"). Sin este handler caian en el
+     * generico y el admin veia un 500 en lugar del motivo real.
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ApiResponse<Void>> handleIllegalArgument(IllegalArgumentException ex) {
+        return ResponseEntity
+            .status(HttpStatus.BAD_REQUEST)
+            .body(ApiResponse.<Void>builder()
+                .success(false)
+                .message(ex.getMessage())
+                .build());
+    }
+
+    /**
+     * Caso tipico: aprobar un pedido cuyo stock se agoto mientras esperaba revision. Es un
+     * conflicto de estado legitimo, no un fallo del servidor.
+     */
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<ApiResponse<Void>> handleIllegalState(IllegalStateException ex) {
+        return ResponseEntity
+            .status(HttpStatus.CONFLICT)
             .body(ApiResponse.<Void>builder()
                 .success(false)
                 .message(ex.getMessage())
@@ -214,15 +246,20 @@ public class GlobalExceptionHandler {
                         .build());
     }
 
+    /**
+     * Ultimo recurso. El mensaje de la excepcion puede contener rutas, SQL o datos de clientes, asi
+     * que se registra en el log y al cliente solo se le devuelve un identificador para soporte.
+     */
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<ApiResponse<Void>> handleGenericException(
-            Exception ex) {
-        ex.printStackTrace();
+    public ResponseEntity<ApiResponse<Void>> handleGenericException(Exception ex) {
+        String errorId = UUID.randomUUID().toString().substring(0, 8);
+        log.error("Error no controlado [{}]", errorId, ex);
+
         return ResponseEntity
             .status(HttpStatus.INTERNAL_SERVER_ERROR)
             .body(ApiResponse.<Void>builder()
                 .success(false)
-                        .message("Error interno del servidor: " + ex.getMessage())
+                .message("Ocurrio un error inesperado. Codigo de referencia: " + errorId)
                 .build());
     }
 

@@ -137,10 +137,9 @@ public class ProductController {
             @RequestPart(value = "video", required = false) MultipartFile video) {
 
         List<MultipartFile> resolvedImages = resolveImages(images, image);
-        log.info("Recibiendo solicitud de creacion de producto");
-        log.info("JSON recibido: {}", productRequestJson);
-        log.info("Cantidad de imagenes recibidas: {}", resolvedImages.size());
-        log.info("Video recibido: {}", video != null && !video.isEmpty());
+        log.info("Creando producto: {} imagenes, video={}",
+                resolvedImages.size(), video != null && !video.isEmpty());
+        log.debug("Payload de producto recibido: {}", productRequestJson);
 
         ProductRequest request;
         try {

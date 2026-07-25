@@ -3,6 +3,7 @@ package com.novedadeslz.backend.service;
 import com.novedadeslz.backend.dto.request.OrderPaymentReviewRequest;
 import com.novedadeslz.backend.dto.request.OrderRequest;
 import com.novedadeslz.backend.dto.response.OrderResponse;
+import com.novedadeslz.backend.event.PaymentProofUploadedEvent;
 import com.novedadeslz.backend.exception.BadRequestException;
 import com.novedadeslz.backend.exception.ResourceNotFoundException;
 import com.novedadeslz.backend.model.Order;
@@ -10,43 +11,92 @@ import com.novedadeslz.backend.model.OrderItem;
 import com.novedadeslz.backend.model.Product;
 import com.novedadeslz.backend.repository.OrderRepository;
 import com.novedadeslz.backend.repository.ProductRepository;
+import com.novedadeslz.backend.security.JwtTokenProvider;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.modelmapper.ModelMapper;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Locale;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class OrderService {
 
+    /** Reintentos ante colision del correlativo diario de numero de pedido. */
+    private static final int MAX_ORDER_NUMBER_ATTEMPTS = 4;
+
     private final OrderRepository orderRepository;
     private final ProductRepository productRepository;
     private final ModelMapper modelMapper;
     private final CloudinaryService cloudinaryService;
     private final OcrService ocrService;
-    private final WhatsAppNotificationService whatsAppNotificationService;
+    private final OrderNotificationService orderNotificationService;
+    private final JwtTokenProvider jwtTokenProvider;
+    private final ApplicationEventPublisher eventPublisher;
+    private final TransactionTemplate transactionTemplate;
 
-    @Transactional
+    /**
+     * Limite propio del endpoint publico de comprobantes. No depende del limite global de multipart,
+     * que es mucho mas alto porque el admin sube galerias de producto y video.
+     */
+    @Value("${app.payment-proof.max-size-bytes:5242880}")
+    private long maxPaymentProofSizeBytes;
+
+    /**
+     * El numero de pedido se calcula como {@code COUNT(*) + 1} del dia, que no es atomico: dos
+     * checkouts simultaneos generaban el mismo numero y el segundo moria con un 500 en la cara del
+     * cliente. Se reintenta con un conteo fresco, cada intento en su propia transaccion.
+     *
+     * <p>Se conserva el formato correlativo por dia porque es el dato que el cliente escribe en el
+     * formulario de rastreo.
+     */
     public OrderResponse createOrder(OrderRequest request) {
+        DataIntegrityViolationException lastFailure = null;
+
+        for (int attempt = 1; attempt <= MAX_ORDER_NUMBER_ATTEMPTS; attempt++) {
+            try {
+                return transactionTemplate.execute(status -> createOrderInTransaction(request));
+            } catch (DataIntegrityViolationException e) {
+                lastFailure = e;
+                log.warn("Colision al generar numero de pedido (intento {}/{})",
+                        attempt, MAX_ORDER_NUMBER_ATTEMPTS);
+            }
+        }
+
+        log.error("No se pudo generar un numero de pedido unico tras {} intentos",
+                MAX_ORDER_NUMBER_ATTEMPTS, lastFailure);
+        throw new BadRequestException(
+                "No pudimos registrar tu pedido en este momento. Intenta nuevamente en unos segundos."
+        );
+    }
+
+    private OrderResponse createOrderInTransaction(OrderRequest request) {
         if (request.getItems() == null || request.getItems().isEmpty()) {
             throw new BadRequestException("El pedido debe tener al menos un producto");
         }
 
         Order order = Order.builder()
                 .orderNumber(generateOrderNumber())
+                .publicToken(UUID.randomUUID().toString())
                 .customerName(request.getCustomerName())
                 .customerPhone(request.getCustomerPhone())
                 .customerEmail(request.getCustomerEmail())
@@ -86,7 +136,10 @@ public class OrderService {
         }
 
         order.setTotal(total);
-        return mapToResponse(orderRepository.save(order), false);
+
+        // saveAndFlush para que una colision de order_number salte aqui y no al cerrar la
+        // transaccion, que es donde el reintento ya no seria posible.
+        return mapToResponse(orderRepository.saveAndFlush(order), false);
     }
 
     @Transactional
@@ -124,11 +177,101 @@ public class OrderService {
         return orders.map(order -> mapToResponse(order, true));
     }
 
+    /**
+     * Lectura sin restricciones. Reservado para administradores autenticados.
+     */
     @Transactional(readOnly = true)
-    public OrderResponse getOrderById(Long id) {
+    public OrderResponse getOrderByIdAsAdmin(Long id) {
         Order order = orderRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Pedido no encontrado"));
-        return mapToResponse(order, false);
+        return mapToResponse(order, true);
+    }
+
+    /**
+     * Lectura para el cliente duenno del pedido. El id por si solo no basta: hay que presentar el
+     * token generado al crear el pedido.
+     */
+    @Transactional(readOnly = true)
+    public OrderResponse getOrderByIdForCustomer(Long id, String publicToken) {
+        return mapToResponse(requireOrderOwnedByCustomer(id, publicToken), false);
+    }
+
+    /**
+     * Busqueda publica de rastreo: numero de pedido + telefono con el que se registro.
+     * Se responde siempre con el mismo error generico para no revelar que numeros existen.
+     */
+    @Transactional
+    public OrderResponse trackOrder(String orderNumber, String customerPhone) {
+        String normalizedOrderNumber = orderNumber == null ? "" : orderNumber.trim();
+
+        Order order = orderRepository.findByOrderNumberIgnoreCase(normalizedOrderNumber)
+                .filter(candidate -> phoneMatches(candidate.getCustomerPhone(), customerPhone))
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "No encontramos un pedido con ese numero y telefono"
+                ));
+
+        return mapToResponse(ensurePublicToken(order), false);
+    }
+
+    /**
+     * Los pedidos anteriores a la migracion, y los creados en la ventana entre el backfill y el
+     * despliegue, no tienen token. En vez de dejarlos inaccesibles para su duenno, se les asigna
+     * uno la primera vez que se identifican con numero de pedido y telefono.
+     */
+    private Order ensurePublicToken(Order order) {
+        if (StringUtils.hasText(order.getPublicToken())) {
+            return order;
+        }
+
+        order.setPublicToken(UUID.randomUUID().toString());
+        log.info("Se asigno token de acceso al pedido {} (creado antes de la migracion)",
+                order.getOrderNumber());
+
+        return orderRepository.save(order);
+    }
+
+    private Order requireOrderOwnedByCustomer(Long id, String publicToken) {
+        Order order = orderRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Pedido no encontrado"));
+
+        if (!tokenMatches(order.getPublicToken(), publicToken)) {
+            // Mismo mensaje que "no existe": un atacante que enumera ids no debe poder distinguir
+            // entre un pedido inexistente y uno al que simplemente no tiene acceso.
+            throw new ResourceNotFoundException("Pedido no encontrado");
+        }
+
+        return order;
+    }
+
+    private boolean tokenMatches(String expectedToken, String providedToken) {
+        if (!StringUtils.hasText(expectedToken) || !StringUtils.hasText(providedToken)) {
+            return false;
+        }
+
+        return MessageDigest.isEqual(
+                expectedToken.getBytes(StandardCharsets.UTF_8),
+                providedToken.trim().getBytes(StandardCharsets.UTF_8)
+        );
+    }
+
+    /**
+     * Compara los ultimos 9 digitos para tolerar formatos distintos entre el checkout
+     * ("+51 987 654 321") y el formulario de rastreo ("987654321").
+     */
+    private boolean phoneMatches(String storedPhone, String providedPhone) {
+        String storedDigits = lastNineDigits(storedPhone);
+        String providedDigits = lastNineDigits(providedPhone);
+
+        return storedDigits.length() == 9 && storedDigits.equals(providedDigits);
+    }
+
+    private String lastNineDigits(String phone) {
+        if (phone == null) {
+            return "";
+        }
+
+        String digits = phone.replaceAll("\\D", "");
+        return digits.length() <= 9 ? digits : digits.substring(digits.length() - 9);
     }
 
     @Transactional
@@ -147,11 +290,103 @@ public class OrderService {
         orderRepository.delete(order);
     }
 
-    @Transactional
-    public OrderResponse uploadYapeProof(Long orderId, MultipartFile proofImage) throws IOException {
-        Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new ResourceNotFoundException("Pedido no encontrado con ID: " + orderId));
+    /**
+     * Sin {@code @Transactional} a proposito.
+     *
+     * <p>Este metodo coordina tres llamadas HTTP externas (OCR, Cloudinary, WhatsApp) que pueden
+     * tardar varios segundos. Cuando todo esto vivia dentro de una sola transaccion, cada subida
+     * retenia una conexion del pool de Oracle durante toda esa espera, y una decena de subidas
+     * concurrentes agotaba el pool y tumbaba tambien el catalogo publico.
+     *
+     * <p>Ahora el trabajo lento ocurre fuera de transaccion y solo el guardado abre una, corta.
+     * El orden no es negociable: el OCR decide si el comprobante se acepta y Cloudinary produce la
+     * URL que se persiste, asi que ambos van antes del guardado. WhatsApp solo lee el pedido ya
+     * guardado, asi que se dispara despues del commit.
+     */
+    public OrderResponse uploadYapeProof(Long orderId, String publicToken, MultipartFile proofImage) {
+        validateProofSize(proofImage);
+        ProofUploadTarget target = loadProofUploadTarget(orderId, publicToken);
 
+        // Paso lento 1: OCR. Actua como filtro de basura y como extractor del numero de operacion.
+        OcrService.YapeOcrResult ocrResult = analyzeProofOrNull(target.orderNumber(), proofImage);
+
+        // Paso lento 2: Cloudinary. Su URL se persiste, por eso va antes del guardado.
+        String proofUrl;
+        try {
+            proofUrl = cloudinaryService.uploadImage(proofImage);
+        } catch (IOException e) {
+            log.error("Error al subir comprobante del pedido {}: {}", target.orderNumber(), e.getMessage());
+            throw new BadRequestException("No pudimos guardar tu comprobante. Intenta nuevamente.");
+        }
+
+        OrderResponse response;
+        try {
+            response = persistUploadedProof(orderId, publicToken, proofUrl, ocrResult);
+        } catch (RuntimeException e) {
+            // Si el guardado falla, la imagen recien subida quedaria huerfana en Cloudinary.
+            cloudinaryService.deleteMedia(proofUrl);
+            throw e;
+        }
+
+        // El comprobante anterior se borra recien cuando el nuevo quedo confirmado en la base.
+        if (StringUtils.hasText(target.previousProofUrl())) {
+            cloudinaryService.deleteImage(target.previousProofUrl());
+        }
+
+        return response;
+    }
+
+    /**
+     * Transaccion corta y explicita. Se usa {@link TransactionTemplate} en lugar de
+     * {@code @Transactional} porque este metodo se invoca desde la misma clase: una anotacion no
+     * tendria efecto al no pasar por el proxy de Spring.
+     *
+     * <p>Se relee el pedido porque entre la verificacion inicial y este punto pasaron varios
+     * segundos de llamadas externas y el admin pudo haber cambiado el estado mientras tanto.
+     */
+    private OrderResponse persistUploadedProof(
+            Long orderId,
+            String publicToken,
+            String proofUrl,
+            OcrService.YapeOcrResult ocrResult) {
+
+        return transactionTemplate.execute(status -> {
+            Order order = requireOrderOwnedByCustomer(orderId, publicToken);
+            requireProofUploadAllowed(order);
+
+            order.setPaymentProof(proofUrl);
+            order.setStatus(Order.OrderStatus.PAYMENT_REVIEW);
+            order.setOperationNumber(null);
+            order.setWhatsappSent(false);
+            appendNote(order, "Cliente subio un comprobante Yape para revision manual.");
+
+            if (ocrResult != null) {
+                applyOcrInsights(order, ocrResult);
+            } else {
+                appendNote(order, "OCR no disponible o no legible. Requiere revision manual completa.");
+            }
+
+            Order savedOrder = orderRepository.save(order);
+
+            // Se entrega despues del commit y en otro hilo (ver PaymentReviewNotificationListener).
+            eventPublisher.publishEvent(new PaymentProofUploadedEvent(savedOrder.getId()));
+
+            return mapToResponse(savedOrder, false);
+        });
+    }
+
+    /**
+     * Lectura previa para validar y quedarse con el comprobante anterior. No necesita transaccion
+     * explicita: {@code findById} abre la suya y solo se leen campos escalares.
+     */
+    private ProofUploadTarget loadProofUploadTarget(Long orderId, String publicToken) {
+        Order order = requireOrderOwnedByCustomer(orderId, publicToken);
+        requireProofUploadAllowed(order);
+
+        return new ProofUploadTarget(order.getOrderNumber(), order.getPaymentProof());
+    }
+
+    private void requireProofUploadAllowed(Order order) {
         String paymentMethod = order.getPaymentMethod() != null
                 ? order.getPaymentMethod().toLowerCase(Locale.ROOT)
                 : "";
@@ -163,47 +398,27 @@ public class OrderService {
                 order.getStatus() != Order.OrderStatus.PAYMENT_REJECTED) {
             throw new BadRequestException("Solo se puede subir comprobante para pedidos pendientes o rechazados");
         }
+    }
 
-        OcrService.YapeOcrResult ocrResult = null;
-        String previousProofUrl = order.getPaymentProof();
+    /**
+     * Un OCR caido no debe impedir la compra: solo se propaga el rechazo explicito por imagen que
+     * no parece un comprobante. Cualquier otro fallo degrada a revision manual completa.
+     */
+    private OcrService.YapeOcrResult analyzeProofOrNull(String orderNumber, MultipartFile proofImage) {
         try {
-            ocrResult = ocrService.analyzeYapeReceipt(proofImage);
+            OcrService.YapeOcrResult ocrResult = ocrService.analyzeYapeReceipt(proofImage);
             validateProofLooksLikeYapeReceipt(ocrResult);
+            return ocrResult;
+        } catch (BadRequestException e) {
+            throw e;
         } catch (Exception e) {
-            if (e instanceof BadRequestException badRequestException) {
-                throw badRequestException;
-            }
-            log.warn("No se pudo analizar OCR para pedido {}: {}", order.getOrderNumber(), e.getMessage());
+            log.warn("No se pudo analizar OCR para pedido {}: {}", orderNumber, e.getMessage());
+            return null;
         }
+    }
 
-        String proofUrl = cloudinaryService.uploadImage(proofImage);
-        if (StringUtils.hasText(previousProofUrl)) {
-            cloudinaryService.deleteImage(previousProofUrl);
-        }
-
-        order.setPaymentProof(proofUrl);
-        order.setStatus(Order.OrderStatus.PAYMENT_REVIEW);
-        order.setOperationNumber(null);
-        order.setWhatsappSent(false);
-        appendNote(order, "Cliente subio un comprobante Yape para revision manual.");
-
-        if (ocrResult != null) {
-            applyOcrInsights(order, ocrResult);
-        } else {
-            appendNote(order, "OCR no disponible o no legible. Requiere revision manual completa.");
-        }
-
-        Order savedOrder = orderRepository.save(order);
-        log.info("Intentando notificar por WhatsApp al admin sobre el pedido {} en revision", savedOrder.getOrderNumber());
-        boolean notificationSent = whatsAppNotificationService.notifyAdminPaymentUnderReview(savedOrder);
-        log.info("Resultado notificacion WhatsApp para pedido {}: {}", savedOrder.getOrderNumber(), notificationSent);
-
-        if (!Boolean.valueOf(notificationSent).equals(savedOrder.getWhatsappSent())) {
-            savedOrder.setWhatsappSent(notificationSent);
-            savedOrder = orderRepository.save(savedOrder);
-        }
-
-        return mapToResponse(savedOrder, false);
+    /** Datos que sobreviven al cierre de la transaccion de lectura. */
+    private record ProofUploadTarget(String orderNumber, String previousProofUrl) {
     }
 
     @Transactional
@@ -246,14 +461,42 @@ public class OrderService {
         return mapToResponse(updatedOrder, true);
     }
 
-    @Transactional
-    public OrderResponse approveOrderPaymentFromWhatsApp(Long orderId) {
+    /**
+     * Lectura para la pantalla de confirmacion del enlace de WhatsApp. No modifica nada: el enlace
+     * llega por un canal donde los previsualizadores hacen GET automatico.
+     */
+    @Transactional(readOnly = true)
+    public OrderResponse getOrderForWhatsAppApproval(Long orderId, String token) {
+        return mapToResponse(requireValidWhatsAppApproval(orderId, token), true);
+    }
+
+    /**
+     * Valida que el enlace corresponda al pedido <em>y</em> al comprobante que se esta revisando.
+     * Un enlace emitido para una captura anterior deja de servir aunque siga vigente.
+     */
+    private Order requireValidWhatsAppApproval(Long orderId, String token) {
         Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new ResourceNotFoundException("Pedido no encontrado con ID: " + orderId));
+                .orElseThrow(() -> new BadRequestException(
+                        "Pide un nuevo enlace desde el panel admin o revisa el pedido manualmente."
+                ));
+
+        if (!jwtTokenProvider.validateWhatsAppApprovalToken(token, orderId, order.getPaymentProof())) {
+            throw new BadRequestException(
+                    "El enlace expiro o el cliente subio un comprobante nuevo. " +
+                            "Revisa el pedido desde el panel admin."
+            );
+        }
 
         if (order.getStatus() != Order.OrderStatus.PAYMENT_REVIEW) {
             throw new BadRequestException("El pedido ya no esta pendiente de revision");
         }
+
+        return order;
+    }
+
+    @Transactional
+    public OrderResponse approveOrderPaymentFromWhatsApp(Long orderId, String token) {
+        Order order = requireValidWhatsAppApproval(orderId, token);
 
         Order.OrderStatus oldStatus = order.getStatus();
         order.setStatus(Order.OrderStatus.CONFIRMED);
@@ -292,7 +535,10 @@ public class OrderService {
         return mapToResponse(updatedOrder, true);
     }
 
-    @Transactional
+    /**
+     * Reenvio manual desde el panel. Se mantiene sincrono porque el admin espera saber si el
+     * mensaje salio, pero el envio ocurre fuera de transaccion igual que en el flujo automatico.
+     */
     public OrderResponse resendPaymentReviewNotification(Long orderId) {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new ResourceNotFoundException("Pedido no encontrado con ID: " + orderId));
@@ -302,15 +548,18 @@ public class OrderService {
         }
 
         log.info("Reintentando notificacion WhatsApp para pedido {}", order.getOrderNumber());
-        boolean notificationSent = whatsAppNotificationService.notifyAdminPaymentUnderReview(order);
-        order.setWhatsappSent(notificationSent);
-        appendNote(order, notificationSent
-                ? "Se reenvio la notificacion WhatsApp al administrador."
-                : "No se pudo reenviar la notificacion WhatsApp al administrador.");
+        boolean notificationSent = orderNotificationService.notifyAdminAboutPaymentReview(orderId);
 
-        Order updatedOrder = orderRepository.save(order);
-        log.info("Resultado reintento WhatsApp para pedido {}: {}", order.getOrderNumber(), notificationSent);
-        return mapToResponse(updatedOrder, true);
+        return transactionTemplate.execute(status -> {
+            Order current = orderRepository.findById(orderId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Pedido no encontrado con ID: " + orderId));
+
+            appendNote(current, notificationSent
+                    ? "Se reenvio la notificacion WhatsApp al administrador."
+                    : "No se pudo reenviar la notificacion WhatsApp al administrador.");
+
+            return mapToResponse(orderRepository.save(current), true);
+        });
     }
 
     private void applyStockRules(Order order, Order.OrderStatus oldStatus, Order.OrderStatus newStatus) {
@@ -384,6 +633,24 @@ public class OrderService {
 
         if (!ocrResult.isBasicSignalsDetected()) {
             appendNote(order, "OCR no detecto senales basicas de comprobante Yape. Revisar imagen manualmente.");
+        }
+    }
+
+    private void validateProofSize(MultipartFile proofImage) {
+        if (proofImage == null || proofImage.isEmpty()) {
+            throw new BadRequestException("Adjunta la captura del comprobante");
+        }
+
+        if (proofImage.getSize() > maxPaymentProofSizeBytes) {
+            long maxSizeMb = maxPaymentProofSizeBytes / (1024 * 1024);
+            throw new BadRequestException(
+                    "La captura no debe superar " + maxSizeMb + "MB. Envia una imagen mas liviana."
+            );
+        }
+
+        String contentType = proofImage.getContentType();
+        if (contentType == null || !contentType.toLowerCase(Locale.ROOT).startsWith("image/")) {
+            throw new BadRequestException("El comprobante debe ser una imagen");
         }
     }
 

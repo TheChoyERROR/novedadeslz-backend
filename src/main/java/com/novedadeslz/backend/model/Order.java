@@ -14,6 +14,11 @@ import java.util.List;
 @Table(name = "orders", uniqueConstraints = {
     @UniqueConstraint(columnNames = "operation_number")
 })
+// Permite a los listados traer los items en una sola consulta en vez de una por pedido.
+@NamedEntityGraph(
+    name = "Order.items",
+    attributeNodes = @NamedAttributeNode("items")
+)
 @Getter
 @Setter
 @NoArgsConstructor
@@ -28,6 +33,14 @@ public class Order {
 
     @Column(name = "order_number", unique = true, nullable = false, length = 50)
     private String orderNumber;
+
+    /**
+     * Credencial aleatoria que permite al cliente ver su propio pedido sin tener cuenta.
+     * El id es correlativo y por lo tanto adivinable, asi que no puede ser lo unico que protege
+     * los datos personales del comprador.
+     */
+    @Column(name = "public_token", unique = true, length = 36)
+    private String publicToken;
 
     @Column(name = "customer_name", nullable = false, length = 150)
     private String customerName;

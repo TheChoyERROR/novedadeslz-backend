@@ -26,8 +26,12 @@ public class OrderRequest {
     @Size(max = 100, message = "La ciudad no puede exceder 100 caracteres")
     private String customerCity;
 
-    @Pattern(regexp = "yape|plin|transfer|cash",
-        message = "Método de pago no válido")
+    /**
+     * Solo los metodos que la tienda atiende de verdad. Plin y transfer se aceptaban aqui pero no
+     * tenian ningun soporte despues: el cliente que los elegia se quedaba sin instrucciones de
+     * pago y sin forma de enviar comprobante.
+     */
+    @Pattern(regexp = "yape|cash", message = "Método de pago no válido")
     private String paymentMethod;
 
     @NotEmpty(message = "El pedido debe contener al menos un producto")
