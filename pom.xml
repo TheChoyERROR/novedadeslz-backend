@@ -40,6 +40,25 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-data-jpa</artifactId>
 		</dependency>
+
+		<!-- Flyway: el esquema de Oracle se versiona y se aplica solo al arrancar.
+		     Hacen falta tres artefactos:
+		       - spring-boot-flyway: la autoconfiguracion, que en Spring Boot 4 vive en su
+		         propio modulo y sin la cual Flyway queda en el classpath pero nunca se ejecuta
+		       - flyway-core: el motor
+		       - flyway-database-oracle: el soporte de Oracle, separado desde Flyway 10 -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-flyway</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-core</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-database-oracle</artifactId>
+		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-security</artifactId>

@@ -61,20 +61,27 @@ RATE_LIMIT_ENABLED=true
 DB_POOL_SIZE=10
 ```
 
-## 3.1 Migraciones Oracle pendientes
+## 3.1 Migraciones de base de datos
 
-Antes de desplegar esta version hay que ejecutar contra la base de datos:
+Ya no hay que ejecutar SQL a mano. Flyway aplica las migraciones de
+`src/main/resources/db/migration` al arrancar el backend, y lleva el registro en la tabla
+`flyway_schema_history`.
 
-```
-deploy/oracle/2026-07-25-order-public-token.sql
-deploy/oracle/2026-07-25-performance-indexes.sql
-```
+La primera vez que arranque esta version contra la base actual, Flyway:
 
-La primera agrega la columna `public_token` a `orders` y rellena los pedidos existentes. Sin esa
-columna el arranque funciona pero cualquier lectura de pedidos falla.
+1. Crea `flyway_schema_history` y registra la linea base en la version 0
+2. Ejecuta V1, que detecta que las tablas ya existen y no hace nada
+3. Ejecuta V2 y V3, que ya estaban aplicadas y quedan como no-op
+4. Ejecuta V4, que agrega `orders.public_token` y lo rellena en los pedidos existentes
+5. Ejecuta V5, que crea los indices de `orders`, `order_items` y `products`
 
-La segunda crea los indices de `orders`, `order_items` y `products`. No es bloqueante para el
-arranque, pero sin ella los filtros del panel admin hacen full table scan. Es idempotente.
+Los pedidos que ya existen conservan sus datos y reciben su token en el paso 4.
+
+Para agregar una migracion nueva, se crea un archivo `V<n>__descripcion.sql` en esa carpeta. No
+hay que tocar los archivos ya aplicados: Flyway valida su checksum y el arranque falla si cambian.
+
+`FLYWAY_ENABLED=false` desactiva todo esto si alguna vez hace falta arrancar sin migrar.
+
 
 ## 3.2 Notas de seguridad
 

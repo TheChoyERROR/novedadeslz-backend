@@ -23,7 +23,9 @@ BEGIN
   EXECUTE IMMEDIATE 'CREATE UNIQUE INDEX uk_orders_public_token ON orders (public_token)';
 EXCEPTION
   WHEN OTHERS THEN
-    IF SQLCODE != -955 THEN
+    -- ORA-00955: nombre ya usado por otro objeto
+    -- ORA-01408: la columna ya esta indexada (por ejemplo por una restriccion UNIQUE previa)
+    IF SQLCODE NOT IN (-955, -1408) THEN
       RAISE;
     END IF;
 END;

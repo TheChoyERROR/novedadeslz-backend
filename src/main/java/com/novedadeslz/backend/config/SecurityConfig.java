@@ -74,6 +74,9 @@ public class SecurityConfig {
                 // de pedido validan el token del pedido dentro de OrderService.
                 .requestMatchers("/api/auth/**").permitAll()
                 .requestMatchers("/uploads/**").permitAll()
+                // Health check del proveedor de hosting. Devolvia 403 y Render habria marcado el
+                // servicio como caido. Solo expone {"status":"UP"}: el detalle sigue oculto.
+                .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/products/**").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/orders").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/orders/track").permitAll()
