@@ -44,6 +44,7 @@ import org.springframework.beans.factory.annotation.Value;
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 
 @RestController
@@ -138,7 +139,7 @@ public class OrderController {
             @PathVariable Long id,
             @RequestBody Map<String, String> request) {
 
-        Order.OrderStatus status = Order.OrderStatus.valueOf(request.get("status"));
+        Order.OrderStatus status = parseOrderStatus(request.get("status"));
         OrderResponse order = orderService.updateOrderStatus(id, status);
 
         return ResponseEntity.ok(
@@ -291,6 +292,18 @@ public class OrderController {
         return ResponseEntity.ok(
                 ApiResponse.success("Mensaje de prueba enviado correctamente por WhatsApp.", responseData)
         );
+    }
+
+    private Order.OrderStatus parseOrderStatus(String rawStatus) {
+        if (rawStatus == null || rawStatus.isBlank()) {
+            throw new BadRequestException("Indica el nuevo estado del pedido");
+        }
+
+        try {
+            return Order.OrderStatus.valueOf(rawStatus.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException ex) {
+            throw new BadRequestException("Estado de pedido no valido: " + rawStatus);
+        }
     }
 
     private boolean isAdmin(Authentication authentication) {

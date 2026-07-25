@@ -58,6 +58,7 @@ APP_BOOTSTRAP_ADMIN_PHONE=+51939662630
 APP_BOOTSTRAP_ADMIN_RESET_PASSWORD=false
 LOG_LEVEL=INFO
 RATE_LIMIT_ENABLED=true
+DB_POOL_SIZE=10
 ```
 
 ## 3.1 Migraciones Oracle pendientes
@@ -66,10 +67,14 @@ Antes de desplegar esta version hay que ejecutar contra la base de datos:
 
 ```
 deploy/oracle/2026-07-25-order-public-token.sql
+deploy/oracle/2026-07-25-performance-indexes.sql
 ```
 
-Agrega la columna `public_token` a `orders` y rellena los pedidos existentes. Sin esa columna el
-arranque funciona pero cualquier lectura de pedidos falla.
+La primera agrega la columna `public_token` a `orders` y rellena los pedidos existentes. Sin esa
+columna el arranque funciona pero cualquier lectura de pedidos falla.
+
+La segunda crea los indices de `orders`, `order_items` y `products`. No es bloqueante para el
+arranque, pero sin ella los filtros del panel admin hacen full table scan. Es idempotente.
 
 ## 3.2 Notas de seguridad
 

@@ -2,6 +2,7 @@ package com.novedadeslz.backend.service;
 
 import com.novedadeslz.backend.dto.request.OrderRequest;
 import com.novedadeslz.backend.dto.response.OrderResponse;
+import com.novedadeslz.backend.event.PaymentProofUploadedEvent;
 import com.novedadeslz.backend.exception.BadRequestException;
 import com.novedadeslz.backend.model.Order;
 import com.novedadeslz.backend.model.Product;
@@ -14,8 +15,12 @@ import org.modelmapper.ModelMapper;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -29,6 +34,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -52,12 +59,31 @@ class OrderServiceTest {
     private OcrService ocrService;
 
     @Mock
-    private WhatsAppNotificationService whatsAppNotificationService;
+    private OrderNotificationService orderNotificationService;
+
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
+
+    @Mock
+    private TransactionTemplate transactionTemplate;
 
     @InjectMocks
     private OrderService orderService;
 
     private static final String VALID_TOKEN = "3f1c9d2e-7a45-4b18-9c30-5e6f8a1b2c3d";
+
+
+    /**
+     * OrderService abre sus transacciones con TransactionTemplate para evitar la auto-invocacion
+     * que anularia @Transactional. En pruebas unitarias se ejecuta el callback directamente.
+     */
+    @BeforeEach
+    void stubTransactionTemplate() {
+        lenient().when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
+            TransactionCallback<?> callback = invocation.getArgument(0);
+            return callback.doInTransaction(mock(TransactionStatus.class));
+        });
+    }
 
     @BeforeEach
     void configureLimits() {
@@ -92,7 +118,7 @@ class OrderServiceTest {
         );
         verify(cloudinaryService, never()).uploadImage(any());
         verify(orderRepository, never()).save(any(Order.class));
-        verify(whatsAppNotificationService, never()).notifyAdminPaymentUnderReview(any(Order.class));
+        verify(eventPublisher, never()).publishEvent(any(PaymentProofUploadedEvent.class));
     }
 
     @Test
@@ -107,14 +133,13 @@ class OrderServiceTest {
         when(cloudinaryService.uploadImage(proof)).thenReturn("https://cdn.example.com/proof.png");
         when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(modelMapper.map(any(Order.class), eq(OrderResponse.class))).thenReturn(mappedResponse);
-        when(whatsAppNotificationService.notifyAdminPaymentUnderReview(any(Order.class))).thenReturn(true);
-
         OrderResponse response = orderService.uploadYapeProof(21L, VALID_TOKEN, proof);
 
         assertEquals("ORD-20260412-0001", response.getOrderNumber());
         verify(cloudinaryService).uploadImage(proof);
         verify(orderRepository, atLeastOnce()).save(any(Order.class));
-        verify(whatsAppNotificationService).notifyAdminPaymentUnderReview(any(Order.class));
+        // El aviso al admin ya no bloquea la respuesta: se publica y se entrega tras el commit.
+        verify(eventPublisher).publishEvent(any(PaymentProofUploadedEvent.class));
     }
 
     @Test
@@ -145,13 +170,13 @@ class OrderServiceTest {
 
         when(productRepository.findById(7L)).thenReturn(Optional.of(product));
         when(orderRepository.countByOrderNumberStartingWith(anyString())).thenReturn(1L);
-        when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(orderRepository.saveAndFlush(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(modelMapper.map(any(Order.class), eq(OrderResponse.class))).thenReturn(mappedResponse);
 
         OrderResponse response = orderService.createOrder(request);
 
         assertEquals("ORD-20260414-0002", response.getOrderNumber());
-        verify(orderRepository).save(any(Order.class));
+        verify(orderRepository).saveAndFlush(any(Order.class));
     }
 
     private Order buildPendingYapeOrder() {

@@ -12,8 +12,12 @@ import org.modelmapper.ModelMapper;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -25,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -54,13 +59,23 @@ class OrderAccessControlTest {
     private OcrService ocrService;
 
     @Mock
-    private WhatsAppNotificationService whatsAppNotificationService;
+    private OrderNotificationService orderNotificationService;
+
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
+
+    @Mock
+    private TransactionTemplate transactionTemplate;
 
     @InjectMocks
     private OrderService orderService;
 
     @BeforeEach
     void setUp() {
+        lenient().when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
+            TransactionCallback<?> callback = invocation.getArgument(0);
+            return callback.doInTransaction(mock(TransactionStatus.class));
+        });
         ReflectionTestUtils.setField(orderService, "maxPaymentProofSizeBytes", 5L * 1024 * 1024);
         lenient().when(modelMapper.map(any(Order.class), eq(OrderResponse.class)))
                 .thenAnswer(invocation -> {

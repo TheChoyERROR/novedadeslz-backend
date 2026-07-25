@@ -23,7 +23,13 @@ public class OrderItem {
     @JoinColumn(name = "order_id", nullable = false)
     private Order order;
 
-    @ManyToOne(fetch = FetchType.EAGER)
+    /**
+     * LAZY a proposito: los listados solo necesitan {@code getProduct().getId()}, que el proxy
+     * resuelve desde la propia FK sin consultar. Con EAGER, cada listado de pedidos disparaba una
+     * consulta extra por producto distinto. Los flujos que si tocan el producto completo
+     * (ajustes de stock) corren dentro de una transaccion, donde el proxy se resuelve solo.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "product_id", nullable = false)
     private Product product;
 

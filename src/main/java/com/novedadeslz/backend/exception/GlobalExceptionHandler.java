@@ -116,6 +116,35 @@ public class GlobalExceptionHandler {
                 .build());
     }
 
+    /**
+     * Los servicios de producto usan IllegalArgumentException para las validaciones de negocio
+     * ("selecciona al menos una imagen", "hasta 20 imagenes"). Sin este handler caian en el
+     * generico y el admin veia un 500 en lugar del motivo real.
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ApiResponse<Void>> handleIllegalArgument(IllegalArgumentException ex) {
+        return ResponseEntity
+            .status(HttpStatus.BAD_REQUEST)
+            .body(ApiResponse.<Void>builder()
+                .success(false)
+                .message(ex.getMessage())
+                .build());
+    }
+
+    /**
+     * Caso tipico: aprobar un pedido cuyo stock se agoto mientras esperaba revision. Es un
+     * conflicto de estado legitimo, no un fallo del servidor.
+     */
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<ApiResponse<Void>> handleIllegalState(IllegalStateException ex) {
+        return ResponseEntity
+            .status(HttpStatus.CONFLICT)
+            .body(ApiResponse.<Void>builder()
+                .success(false)
+                .message(ex.getMessage())
+                .build());
+    }
+
     @ExceptionHandler(DuplicateResourceException.class)
     public ResponseEntity<ApiResponse<Void>> handleDuplicateResource(
             DuplicateResourceException ex) {

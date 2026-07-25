@@ -3,6 +3,7 @@ package com.novedadeslz.backend.service;
 import com.novedadeslz.backend.dto.request.OrderPaymentReviewRequest;
 import com.novedadeslz.backend.dto.request.OrderRequest;
 import com.novedadeslz.backend.dto.response.OrderResponse;
+import com.novedadeslz.backend.event.PaymentProofUploadedEvent;
 import com.novedadeslz.backend.exception.BadRequestException;
 import com.novedadeslz.backend.exception.ResourceNotFoundException;
 import com.novedadeslz.backend.model.Order;
@@ -14,10 +15,13 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.modelmapper.ModelMapper;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -36,12 +40,17 @@ import java.util.UUID;
 @Slf4j
 public class OrderService {
 
+    /** Reintentos ante colision del correlativo diario de numero de pedido. */
+    private static final int MAX_ORDER_NUMBER_ATTEMPTS = 4;
+
     private final OrderRepository orderRepository;
     private final ProductRepository productRepository;
     private final ModelMapper modelMapper;
     private final CloudinaryService cloudinaryService;
     private final OcrService ocrService;
-    private final WhatsAppNotificationService whatsAppNotificationService;
+    private final OrderNotificationService orderNotificationService;
+    private final ApplicationEventPublisher eventPublisher;
+    private final TransactionTemplate transactionTemplate;
 
     /**
      * Limite propio del endpoint publico de comprobantes. No depende del limite global de multipart,
@@ -50,8 +59,35 @@ public class OrderService {
     @Value("${app.payment-proof.max-size-bytes:5242880}")
     private long maxPaymentProofSizeBytes;
 
-    @Transactional
+    /**
+     * El numero de pedido se calcula como {@code COUNT(*) + 1} del dia, que no es atomico: dos
+     * checkouts simultaneos generaban el mismo numero y el segundo moria con un 500 en la cara del
+     * cliente. Se reintenta con un conteo fresco, cada intento en su propia transaccion.
+     *
+     * <p>Se conserva el formato correlativo por dia porque es el dato que el cliente escribe en el
+     * formulario de rastreo.
+     */
     public OrderResponse createOrder(OrderRequest request) {
+        DataIntegrityViolationException lastFailure = null;
+
+        for (int attempt = 1; attempt <= MAX_ORDER_NUMBER_ATTEMPTS; attempt++) {
+            try {
+                return transactionTemplate.execute(status -> createOrderInTransaction(request));
+            } catch (DataIntegrityViolationException e) {
+                lastFailure = e;
+                log.warn("Colision al generar numero de pedido (intento {}/{})",
+                        attempt, MAX_ORDER_NUMBER_ATTEMPTS);
+            }
+        }
+
+        log.error("No se pudo generar un numero de pedido unico tras {} intentos",
+                MAX_ORDER_NUMBER_ATTEMPTS, lastFailure);
+        throw new BadRequestException(
+                "No pudimos registrar tu pedido en este momento. Intenta nuevamente en unos segundos."
+        );
+    }
+
+    private OrderResponse createOrderInTransaction(OrderRequest request) {
         if (request.getItems() == null || request.getItems().isEmpty()) {
             throw new BadRequestException("El pedido debe tener al menos un producto");
         }
@@ -98,7 +134,10 @@ public class OrderService {
         }
 
         order.setTotal(total);
-        return mapToResponse(orderRepository.save(order), false);
+
+        // saveAndFlush para que una colision de order_number salte aqui y no al cerrar la
+        // transaccion, que es donde el reintento ya no seria posible.
+        return mapToResponse(orderRepository.saveAndFlush(order), false);
     }
 
     @Transactional
@@ -232,13 +271,103 @@ public class OrderService {
         orderRepository.delete(order);
     }
 
-    @Transactional
-    public OrderResponse uploadYapeProof(Long orderId, String publicToken, MultipartFile proofImage)
-            throws IOException {
-        Order order = requireOrderOwnedByCustomer(orderId, publicToken);
-
+    /**
+     * Sin {@code @Transactional} a proposito.
+     *
+     * <p>Este metodo coordina tres llamadas HTTP externas (OCR, Cloudinary, WhatsApp) que pueden
+     * tardar varios segundos. Cuando todo esto vivia dentro de una sola transaccion, cada subida
+     * retenia una conexion del pool de Oracle durante toda esa espera, y una decena de subidas
+     * concurrentes agotaba el pool y tumbaba tambien el catalogo publico.
+     *
+     * <p>Ahora el trabajo lento ocurre fuera de transaccion y solo el guardado abre una, corta.
+     * El orden no es negociable: el OCR decide si el comprobante se acepta y Cloudinary produce la
+     * URL que se persiste, asi que ambos van antes del guardado. WhatsApp solo lee el pedido ya
+     * guardado, asi que se dispara despues del commit.
+     */
+    public OrderResponse uploadYapeProof(Long orderId, String publicToken, MultipartFile proofImage) {
         validateProofSize(proofImage);
+        ProofUploadTarget target = loadProofUploadTarget(orderId, publicToken);
 
+        // Paso lento 1: OCR. Actua como filtro de basura y como extractor del numero de operacion.
+        OcrService.YapeOcrResult ocrResult = analyzeProofOrNull(target.orderNumber(), proofImage);
+
+        // Paso lento 2: Cloudinary. Su URL se persiste, por eso va antes del guardado.
+        String proofUrl;
+        try {
+            proofUrl = cloudinaryService.uploadImage(proofImage);
+        } catch (IOException e) {
+            log.error("Error al subir comprobante del pedido {}: {}", target.orderNumber(), e.getMessage());
+            throw new BadRequestException("No pudimos guardar tu comprobante. Intenta nuevamente.");
+        }
+
+        OrderResponse response;
+        try {
+            response = persistUploadedProof(orderId, publicToken, proofUrl, ocrResult);
+        } catch (RuntimeException e) {
+            // Si el guardado falla, la imagen recien subida quedaria huerfana en Cloudinary.
+            cloudinaryService.deleteMedia(proofUrl);
+            throw e;
+        }
+
+        // El comprobante anterior se borra recien cuando el nuevo quedo confirmado en la base.
+        if (StringUtils.hasText(target.previousProofUrl())) {
+            cloudinaryService.deleteImage(target.previousProofUrl());
+        }
+
+        return response;
+    }
+
+    /**
+     * Transaccion corta y explicita. Se usa {@link TransactionTemplate} en lugar de
+     * {@code @Transactional} porque este metodo se invoca desde la misma clase: una anotacion no
+     * tendria efecto al no pasar por el proxy de Spring.
+     *
+     * <p>Se relee el pedido porque entre la verificacion inicial y este punto pasaron varios
+     * segundos de llamadas externas y el admin pudo haber cambiado el estado mientras tanto.
+     */
+    private OrderResponse persistUploadedProof(
+            Long orderId,
+            String publicToken,
+            String proofUrl,
+            OcrService.YapeOcrResult ocrResult) {
+
+        return transactionTemplate.execute(status -> {
+            Order order = requireOrderOwnedByCustomer(orderId, publicToken);
+            requireProofUploadAllowed(order);
+
+            order.setPaymentProof(proofUrl);
+            order.setStatus(Order.OrderStatus.PAYMENT_REVIEW);
+            order.setOperationNumber(null);
+            order.setWhatsappSent(false);
+            appendNote(order, "Cliente subio un comprobante Yape para revision manual.");
+
+            if (ocrResult != null) {
+                applyOcrInsights(order, ocrResult);
+            } else {
+                appendNote(order, "OCR no disponible o no legible. Requiere revision manual completa.");
+            }
+
+            Order savedOrder = orderRepository.save(order);
+
+            // Se entrega despues del commit y en otro hilo (ver PaymentReviewNotificationListener).
+            eventPublisher.publishEvent(new PaymentProofUploadedEvent(savedOrder.getId()));
+
+            return mapToResponse(savedOrder, false);
+        });
+    }
+
+    /**
+     * Lectura previa para validar y quedarse con el comprobante anterior. No necesita transaccion
+     * explicita: {@code findById} abre la suya y solo se leen campos escalares.
+     */
+    private ProofUploadTarget loadProofUploadTarget(Long orderId, String publicToken) {
+        Order order = requireOrderOwnedByCustomer(orderId, publicToken);
+        requireProofUploadAllowed(order);
+
+        return new ProofUploadTarget(order.getOrderNumber(), order.getPaymentProof());
+    }
+
+    private void requireProofUploadAllowed(Order order) {
         String paymentMethod = order.getPaymentMethod() != null
                 ? order.getPaymentMethod().toLowerCase(Locale.ROOT)
                 : "";
@@ -250,47 +379,27 @@ public class OrderService {
                 order.getStatus() != Order.OrderStatus.PAYMENT_REJECTED) {
             throw new BadRequestException("Solo se puede subir comprobante para pedidos pendientes o rechazados");
         }
+    }
 
-        OcrService.YapeOcrResult ocrResult = null;
-        String previousProofUrl = order.getPaymentProof();
+    /**
+     * Un OCR caido no debe impedir la compra: solo se propaga el rechazo explicito por imagen que
+     * no parece un comprobante. Cualquier otro fallo degrada a revision manual completa.
+     */
+    private OcrService.YapeOcrResult analyzeProofOrNull(String orderNumber, MultipartFile proofImage) {
         try {
-            ocrResult = ocrService.analyzeYapeReceipt(proofImage);
+            OcrService.YapeOcrResult ocrResult = ocrService.analyzeYapeReceipt(proofImage);
             validateProofLooksLikeYapeReceipt(ocrResult);
+            return ocrResult;
+        } catch (BadRequestException e) {
+            throw e;
         } catch (Exception e) {
-            if (e instanceof BadRequestException badRequestException) {
-                throw badRequestException;
-            }
-            log.warn("No se pudo analizar OCR para pedido {}: {}", order.getOrderNumber(), e.getMessage());
+            log.warn("No se pudo analizar OCR para pedido {}: {}", orderNumber, e.getMessage());
+            return null;
         }
+    }
 
-        String proofUrl = cloudinaryService.uploadImage(proofImage);
-        if (StringUtils.hasText(previousProofUrl)) {
-            cloudinaryService.deleteImage(previousProofUrl);
-        }
-
-        order.setPaymentProof(proofUrl);
-        order.setStatus(Order.OrderStatus.PAYMENT_REVIEW);
-        order.setOperationNumber(null);
-        order.setWhatsappSent(false);
-        appendNote(order, "Cliente subio un comprobante Yape para revision manual.");
-
-        if (ocrResult != null) {
-            applyOcrInsights(order, ocrResult);
-        } else {
-            appendNote(order, "OCR no disponible o no legible. Requiere revision manual completa.");
-        }
-
-        Order savedOrder = orderRepository.save(order);
-        log.info("Intentando notificar por WhatsApp al admin sobre el pedido {} en revision", savedOrder.getOrderNumber());
-        boolean notificationSent = whatsAppNotificationService.notifyAdminPaymentUnderReview(savedOrder);
-        log.info("Resultado notificacion WhatsApp para pedido {}: {}", savedOrder.getOrderNumber(), notificationSent);
-
-        if (!Boolean.valueOf(notificationSent).equals(savedOrder.getWhatsappSent())) {
-            savedOrder.setWhatsappSent(notificationSent);
-            savedOrder = orderRepository.save(savedOrder);
-        }
-
-        return mapToResponse(savedOrder, false);
+    /** Datos que sobreviven al cierre de la transaccion de lectura. */
+    private record ProofUploadTarget(String orderNumber, String previousProofUrl) {
     }
 
     @Transactional
@@ -379,7 +488,10 @@ public class OrderService {
         return mapToResponse(updatedOrder, true);
     }
 
-    @Transactional
+    /**
+     * Reenvio manual desde el panel. Se mantiene sincrono porque el admin espera saber si el
+     * mensaje salio, pero el envio ocurre fuera de transaccion igual que en el flujo automatico.
+     */
     public OrderResponse resendPaymentReviewNotification(Long orderId) {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new ResourceNotFoundException("Pedido no encontrado con ID: " + orderId));
@@ -389,15 +501,18 @@ public class OrderService {
         }
 
         log.info("Reintentando notificacion WhatsApp para pedido {}", order.getOrderNumber());
-        boolean notificationSent = whatsAppNotificationService.notifyAdminPaymentUnderReview(order);
-        order.setWhatsappSent(notificationSent);
-        appendNote(order, notificationSent
-                ? "Se reenvio la notificacion WhatsApp al administrador."
-                : "No se pudo reenviar la notificacion WhatsApp al administrador.");
+        boolean notificationSent = orderNotificationService.notifyAdminAboutPaymentReview(orderId);
 
-        Order updatedOrder = orderRepository.save(order);
-        log.info("Resultado reintento WhatsApp para pedido {}: {}", order.getOrderNumber(), notificationSent);
-        return mapToResponse(updatedOrder, true);
+        return transactionTemplate.execute(status -> {
+            Order current = orderRepository.findById(orderId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Pedido no encontrado con ID: " + orderId));
+
+            appendNote(current, notificationSent
+                    ? "Se reenvio la notificacion WhatsApp al administrador."
+                    : "No se pudo reenviar la notificacion WhatsApp al administrador.");
+
+            return mapToResponse(orderRepository.save(current), true);
+        });
     }
 
     private void applyStockRules(Order order, Order.OrderStatus oldStatus, Order.OrderStatus newStatus) {

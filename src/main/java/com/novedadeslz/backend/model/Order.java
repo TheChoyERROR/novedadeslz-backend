@@ -14,6 +14,11 @@ import java.util.List;
 @Table(name = "orders", uniqueConstraints = {
     @UniqueConstraint(columnNames = "operation_number")
 })
+// Permite a los listados traer los items en una sola consulta en vez de una por pedido.
+@NamedEntityGraph(
+    name = "Order.items",
+    attributeNodes = @NamedAttributeNode("items")
+)
 @Getter
 @Setter
 @NoArgsConstructor
