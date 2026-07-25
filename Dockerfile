@@ -2,6 +2,9 @@ FROM maven:3.9.9-eclipse-temurin-21 AS build
 WORKDIR /app
 
 COPY pom.xml .
+# lombok.config afecta el codigo generado por Lombok. Sin copiarlo, la imagen se construye con
+# semantica distinta a la del build local, que es como se colo un fallo de arranque en produccion.
+COPY lombok.config .
 COPY src ./src
 
 RUN mvn -B -DskipTests clean package
