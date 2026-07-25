@@ -13,4 +13,9 @@ COPY --from=build /app/target/backend-0.0.1-SNAPSHOT.jar /app/backend.jar
 
 EXPOSE 8080
 
-CMD ["sh", "-c", "java $JAVA_OPTS -jar /app/backend.jar"]
+# Sin limite explicito la JVM toma solo el 25% de la RAM del contenedor (128MB en un Render
+# Starter de 512MB), lo que provoca OutOfMemoryError con pocas subidas concurrentes.
+# Se puede sobrescribir desde las variables de entorno del servicio.
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=70.0 -XX:+ExitOnOutOfMemoryError"
+
+CMD ["sh", "-c", "exec java $JAVA_OPTS -jar /app/backend.jar"]

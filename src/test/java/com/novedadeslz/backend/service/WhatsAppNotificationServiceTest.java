@@ -23,8 +23,9 @@ class WhatsAppNotificationServiceTest {
 
     @Test
     void sendAdminTestMessageShouldPostToTwilioWhenConfigured() {
-        WhatsAppNotificationService service = new WhatsAppNotificationService(new JwtTokenProvider());
-        RestTemplate restTemplate = (RestTemplate) ReflectionTestUtils.getField(service, "restTemplate");
+        RestTemplate restTemplate = new RestTemplate();
+        WhatsAppNotificationService service =
+                new WhatsAppNotificationService(new JwtTokenProvider(), restTemplate);
         MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
 
         ReflectionTestUtils.setField(service, "notificationsEnabled", true);
@@ -52,7 +53,8 @@ class WhatsAppNotificationServiceTest {
 
     @Test
     void sendAdminTestMessageShouldReturnFalseWhenNotificationsDisabled() {
-        WhatsAppNotificationService service = new WhatsAppNotificationService(new JwtTokenProvider());
+        WhatsAppNotificationService service =
+                new WhatsAppNotificationService(new JwtTokenProvider(), new RestTemplate());
         ReflectionTestUtils.setField(service, "notificationsEnabled", false);
 
         boolean sent = service.sendAdminTestMessage();

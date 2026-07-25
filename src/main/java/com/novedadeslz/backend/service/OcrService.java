@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
@@ -33,7 +34,9 @@ public class OcrService {
     @Value("${yape.recipient.name:Leslie Lopez}")
     private String expectedRecipientName;
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    @Qualifier("ocrRestTemplate")
+    private final RestTemplate restTemplate;
+
     private final ObjectMapper objectMapper;
 
     private static final String OCR_API_URL = "https://api.ocr.space/parse/image";
@@ -112,7 +115,7 @@ public class OcrService {
             }
 
             String extractedText = parsedResults.get(0).path("ParsedText").asText();
-            log.info("Texto extraído del OCR: {}", extractedText);
+            log.debug("Texto extraido del OCR: {}", extractedText);
 
             // Analizar el texto extraído para obtener datos de Yape
             return parseYapeData(extractedText);
@@ -142,7 +145,7 @@ public class OcrService {
         Matcher operationMatcher = operationPattern.matcher(normalizedText);
         if (operationMatcher.find()) {
             result.setOperationNumber(operationMatcher.group(1));
-            log.info("Número de operación detectado: {}", result.getOperationNumber());
+            log.debug("Numero de operacion detectado: {}", result.getOperationNumber());
         }
 
         // 2. Extraer monto (formato: S/ 123.45 o S/123.45)
@@ -169,7 +172,7 @@ public class OcrService {
 
         if (maxAmount.compareTo(BigDecimal.ZERO) > 0) {
             result.setAmount(maxAmount);
-            log.info("Monto detectado: S/ {}", result.getAmount());
+            log.debug("Monto detectado: S/ {}", result.getAmount());
         }
 
         // 3. Extraer fecha y hora (formato: DD/MM/YYYY HH:MM)
@@ -181,7 +184,7 @@ public class OcrService {
         if (dateMatcher.find()) {
             String dateTimeStr = dateMatcher.group(0);
             result.setDateTime(dateTimeStr);
-            log.info("Fecha/hora detectada: {}", result.getDateTime());
+            log.debug("Fecha/hora detectada: {}", result.getDateTime());
         }
 
         // 4. Detectar si contiene la palabra "Yape"
@@ -194,7 +197,7 @@ public class OcrService {
         Matcher recipientPhoneMatcher = recipientPhonePattern.matcher(normalizedText);
         if (recipientPhoneMatcher.find()) {
             result.setRecipientPhone(recipientPhoneMatcher.group(1));
-            log.info("Teléfono destinatario detectado: {}", result.getRecipientPhone());
+            log.debug("Telefono destinatario detectado: {}", result.getRecipientPhone());
         } else {
             // Buscar cualquier número de 9 dígitos que empiece con 9 (que no sea operación)
             Pattern anyPhonePattern = Pattern.compile("\\b(9[0-9]{8})\\b");
@@ -204,7 +207,7 @@ public class OcrService {
                 // Ignorar si ya se usó como número de operación
                 if (result.getOperationNumber() == null || !result.getOperationNumber().contains(phone)) {
                     result.setRecipientPhone(phone);
-                    log.info("Teléfono detectado (sin contexto): {}", phone);
+                    log.debug("Telefono detectado (sin contexto): {}", phone);
                     break;
                 }
             }
@@ -218,7 +221,7 @@ public class OcrService {
         Matcher recipientNameMatcher = recipientNamePattern.matcher(normalizedText);
         if (recipientNameMatcher.find()) {
             result.setRecipientName(recipientNameMatcher.group(1).trim());
-            log.info("Nombre destinatario detectado: {}", result.getRecipientName());
+            log.debug("Nombre destinatario detectado: {}", result.getRecipientName());
         }
 
         // 7. Validar destinatario correcto

@@ -2,10 +2,12 @@ package com.novedadeslz.backend.security;
 
 import io.jsonwebtoken.*;
 import io.jsonwebtoken.security.Keys;
+import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
@@ -14,7 +16,14 @@ import java.util.Date;
 @Component
 public class JwtTokenProvider {
 
-    @Value("${jwt.secret:TuClaveSecretaSuperSeguraDeAlMenos64CaracteresParaHS512Algorithm}")
+    /** Longitud minima exigida por HS512. */
+    private static final int MIN_SECRET_LENGTH_BYTES = 64;
+
+    /** Secreto que se publico en el repositorio; jamas debe firmar tokens reales. */
+    private static final String LEAKED_DEFAULT_SECRET =
+            "TuClaveSecretaSuperSeguraDeAlMenos64CaracteresParaHS512Algorithm";
+
+    @Value("${jwt.secret:}")
     private String jwtSecret;
 
     @Value("${jwt.expiration:86400000}") // 24 horas en ms
@@ -22,6 +31,36 @@ public class JwtTokenProvider {
 
     @Value("${app.whatsapp-approval-link-expiration-minutes:20}")
     private long whatsappApprovalLinkExpirationMinutes;
+
+    /**
+     * Falla el arranque si el secreto no esta configurado, es demasiado corto o sigue siendo el
+     * valor que estuvo versionado en el repositorio. Es preferible no arrancar a firmar tokens de
+     * administrador con una clave que cualquiera puede leer en GitHub.
+     */
+    @PostConstruct
+    void validateSecret() {
+        if (!StringUtils.hasText(jwtSecret)) {
+            throw new IllegalStateException(
+                    "JWT_SECRET no esta configurado. Genera uno con `openssl rand -base64 64` " +
+                            "y agregalo a las variables de entorno del servicio."
+            );
+        }
+
+        if (LEAKED_DEFAULT_SECRET.equals(jwtSecret)) {
+            throw new IllegalStateException(
+                    "JWT_SECRET usa el valor por defecto que estuvo publicado en el repositorio. " +
+                            "Genera uno nuevo con `openssl rand -base64 64`."
+            );
+        }
+
+        int secretLength = jwtSecret.getBytes(StandardCharsets.UTF_8).length;
+        if (secretLength < MIN_SECRET_LENGTH_BYTES) {
+            throw new IllegalStateException(
+                    "JWT_SECRET debe tener al menos " + MIN_SECRET_LENGTH_BYTES +
+                            " bytes para HS512 (actual: " + secretLength + ")."
+            );
+        }
+    }
 
     private SecretKey getSigningKey() {
         return Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));

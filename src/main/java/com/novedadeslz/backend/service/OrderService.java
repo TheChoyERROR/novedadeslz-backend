@@ -13,6 +13,7 @@ import com.novedadeslz.backend.repository.ProductRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.modelmapper.ModelMapper;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -22,10 +23,13 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Locale;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -39,6 +43,13 @@ public class OrderService {
     private final OcrService ocrService;
     private final WhatsAppNotificationService whatsAppNotificationService;
 
+    /**
+     * Limite propio del endpoint publico de comprobantes. No depende del limite global de multipart,
+     * que es mucho mas alto porque el admin sube galerias de producto y video.
+     */
+    @Value("${app.payment-proof.max-size-bytes:5242880}")
+    private long maxPaymentProofSizeBytes;
+
     @Transactional
     public OrderResponse createOrder(OrderRequest request) {
         if (request.getItems() == null || request.getItems().isEmpty()) {
@@ -47,6 +58,7 @@ public class OrderService {
 
         Order order = Order.builder()
                 .orderNumber(generateOrderNumber())
+                .publicToken(UUID.randomUUID().toString())
                 .customerName(request.getCustomerName())
                 .customerPhone(request.getCustomerPhone())
                 .customerEmail(request.getCustomerEmail())
@@ -124,11 +136,84 @@ public class OrderService {
         return orders.map(order -> mapToResponse(order, true));
     }
 
+    /**
+     * Lectura sin restricciones. Reservado para administradores autenticados.
+     */
     @Transactional(readOnly = true)
-    public OrderResponse getOrderById(Long id) {
+    public OrderResponse getOrderByIdAsAdmin(Long id) {
         Order order = orderRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Pedido no encontrado"));
+        return mapToResponse(order, true);
+    }
+
+    /**
+     * Lectura para el cliente duenno del pedido. El id por si solo no basta: hay que presentar el
+     * token generado al crear el pedido.
+     */
+    @Transactional(readOnly = true)
+    public OrderResponse getOrderByIdForCustomer(Long id, String publicToken) {
+        return mapToResponse(requireOrderOwnedByCustomer(id, publicToken), false);
+    }
+
+    /**
+     * Busqueda publica de rastreo: numero de pedido + telefono con el que se registro.
+     * Se responde siempre con el mismo error generico para no revelar que numeros existen.
+     */
+    @Transactional(readOnly = true)
+    public OrderResponse trackOrder(String orderNumber, String customerPhone) {
+        String normalizedOrderNumber = orderNumber == null ? "" : orderNumber.trim();
+
+        Order order = orderRepository.findByOrderNumberIgnoreCase(normalizedOrderNumber)
+                .filter(candidate -> phoneMatches(candidate.getCustomerPhone(), customerPhone))
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "No encontramos un pedido con ese numero y telefono"
+                ));
+
         return mapToResponse(order, false);
+    }
+
+    private Order requireOrderOwnedByCustomer(Long id, String publicToken) {
+        Order order = orderRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Pedido no encontrado"));
+
+        if (!tokenMatches(order.getPublicToken(), publicToken)) {
+            // Mismo mensaje que "no existe": un atacante que enumera ids no debe poder distinguir
+            // entre un pedido inexistente y uno al que simplemente no tiene acceso.
+            throw new ResourceNotFoundException("Pedido no encontrado");
+        }
+
+        return order;
+    }
+
+    private boolean tokenMatches(String expectedToken, String providedToken) {
+        if (!StringUtils.hasText(expectedToken) || !StringUtils.hasText(providedToken)) {
+            return false;
+        }
+
+        return MessageDigest.isEqual(
+                expectedToken.getBytes(StandardCharsets.UTF_8),
+                providedToken.trim().getBytes(StandardCharsets.UTF_8)
+        );
+    }
+
+    /**
+     * Compara los ultimos 9 digitos para tolerar formatos distintos entre el checkout
+     * ("+51 987 654 321") y el formulario de rastreo ("987654321").
+     */
+    private boolean phoneMatches(String storedPhone, String providedPhone) {
+        String storedDigits = lastNineDigits(storedPhone);
+        String providedDigits = lastNineDigits(providedPhone);
+
+        return storedDigits.length() == 9 && storedDigits.equals(providedDigits);
+    }
+
+    private String lastNineDigits(String phone) {
+        if (phone == null) {
+            return "";
+        }
+
+        String digits = phone.replaceAll("\\D", "");
+        return digits.length() <= 9 ? digits : digits.substring(digits.length() - 9);
     }
 
     @Transactional
@@ -148,9 +233,11 @@ public class OrderService {
     }
 
     @Transactional
-    public OrderResponse uploadYapeProof(Long orderId, MultipartFile proofImage) throws IOException {
-        Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new ResourceNotFoundException("Pedido no encontrado con ID: " + orderId));
+    public OrderResponse uploadYapeProof(Long orderId, String publicToken, MultipartFile proofImage)
+            throws IOException {
+        Order order = requireOrderOwnedByCustomer(orderId, publicToken);
+
+        validateProofSize(proofImage);
 
         String paymentMethod = order.getPaymentMethod() != null
                 ? order.getPaymentMethod().toLowerCase(Locale.ROOT)
@@ -384,6 +471,24 @@ public class OrderService {
 
         if (!ocrResult.isBasicSignalsDetected()) {
             appendNote(order, "OCR no detecto senales basicas de comprobante Yape. Revisar imagen manualmente.");
+        }
+    }
+
+    private void validateProofSize(MultipartFile proofImage) {
+        if (proofImage == null || proofImage.isEmpty()) {
+            throw new BadRequestException("Adjunta la captura del comprobante");
+        }
+
+        if (proofImage.getSize() > maxPaymentProofSizeBytes) {
+            long maxSizeMb = maxPaymentProofSizeBytes / (1024 * 1024);
+            throw new BadRequestException(
+                    "La captura no debe superar " + maxSizeMb + "MB. Envia una imagen mas liviana."
+            );
+        }
+
+        String contentType = proofImage.getContentType();
+        if (contentType == null || !contentType.toLowerCase(Locale.ROOT).startsWith("image/")) {
+            throw new BadRequestException("El comprobante debe ser una imagen");
         }
     }
 

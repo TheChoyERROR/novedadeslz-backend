@@ -7,6 +7,7 @@ import com.novedadeslz.backend.model.Order;
 import com.novedadeslz.backend.model.Product;
 import com.novedadeslz.backend.repository.OrderRepository;
 import com.novedadeslz.backend.repository.ProductRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.modelmapper.ModelMapper;
@@ -14,6 +15,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -55,6 +57,13 @@ class OrderServiceTest {
     @InjectMocks
     private OrderService orderService;
 
+    private static final String VALID_TOKEN = "3f1c9d2e-7a45-4b18-9c30-5e6f8a1b2c3d";
+
+    @BeforeEach
+    void configureLimits() {
+        ReflectionTestUtils.setField(orderService, "maxPaymentProofSizeBytes", 5L * 1024 * 1024);
+    }
+
     @Test
     void uploadYapeProofShouldRejectImagesWithoutMeaningfulPaymentSignals() throws IOException {
         Order order = buildPendingYapeOrder();
@@ -74,7 +83,7 @@ class OrderServiceTest {
 
         BadRequestException exception = assertThrows(
                 BadRequestException.class,
-                () -> orderService.uploadYapeProof(21L, proof)
+                () -> orderService.uploadYapeProof(21L, VALID_TOKEN, proof)
         );
 
         assertEquals(
@@ -100,7 +109,7 @@ class OrderServiceTest {
         when(modelMapper.map(any(Order.class), eq(OrderResponse.class))).thenReturn(mappedResponse);
         when(whatsAppNotificationService.notifyAdminPaymentUnderReview(any(Order.class))).thenReturn(true);
 
-        OrderResponse response = orderService.uploadYapeProof(21L, proof);
+        OrderResponse response = orderService.uploadYapeProof(21L, VALID_TOKEN, proof);
 
         assertEquals("ORD-20260412-0001", response.getOrderNumber());
         verify(cloudinaryService).uploadImage(proof);
@@ -149,6 +158,7 @@ class OrderServiceTest {
         return Order.builder()
                 .id(21L)
                 .orderNumber("ORD-20260412-0001")
+                .publicToken(VALID_TOKEN)
                 .customerName("Test")
                 .customerPhone("+51999999999")
                 .customerAddress("Direccion")

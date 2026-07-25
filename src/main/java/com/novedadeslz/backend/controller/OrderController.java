@@ -2,6 +2,7 @@ package com.novedadeslz.backend.controller;
 
 import com.novedadeslz.backend.dto.request.OrderPaymentReviewRequest;
 import com.novedadeslz.backend.dto.request.OrderRequest;
+import com.novedadeslz.backend.dto.request.OrderTrackingRequest;
 import com.novedadeslz.backend.dto.response.ApiResponse;
 import com.novedadeslz.backend.dto.response.OrderResponse;
 import com.novedadeslz.backend.dto.response.PageResponse;
@@ -26,6 +27,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -63,9 +65,9 @@ public class OrderController {
     public ResponseEntity<ApiResponse<OrderResponse>> createOrder(
             @Valid @RequestBody OrderRequest request) {
 
-        log.info("Recibido request de orden: customerName={}, customerPhone={}, items={}",
-                request.getCustomerName(), request.getCustomerPhone(),
-                request.getItems() != null ? request.getItems().size() : "null");
+        // Sin datos personales: estos logs quedan retenidos en el proveedor de hosting.
+        log.info("Creando pedido con {} items",
+                request.getItems() != null ? request.getItems().size() : 0);
 
         OrderResponse order = orderService.createOrder(request);
 
@@ -102,9 +104,29 @@ public class OrderController {
     }
 
     @GetMapping("/{id}")
-    @Operation(summary = "Obtener pedido por ID (publico)")
-    public ResponseEntity<ApiResponse<OrderResponse>> getOrderById(@PathVariable Long id) {
-        OrderResponse order = orderService.getOrderById(id);
+    @Operation(summary = "Obtener pedido por ID (requiere token del pedido o rol ADMIN)")
+    public ResponseEntity<ApiResponse<OrderResponse>> getOrderById(
+            @PathVariable Long id,
+            @RequestParam(name = "token", required = false) String publicToken,
+            Authentication authentication) {
+
+        OrderResponse order = isAdmin(authentication)
+                ? orderService.getOrderByIdAsAdmin(id)
+                : orderService.getOrderByIdForCustomer(id, publicToken);
+
+        return ResponseEntity.ok(ApiResponse.success(order));
+    }
+
+    @PostMapping("/track")
+    @Operation(summary = "Rastrear pedido con numero de pedido y telefono (publico)")
+    public ResponseEntity<ApiResponse<OrderResponse>> trackOrder(
+            @Valid @RequestBody OrderTrackingRequest request) {
+
+        OrderResponse order = orderService.trackOrder(
+                request.getOrderNumber(),
+                request.getCustomerPhone()
+        );
+
         return ResponseEntity.ok(ApiResponse.success(order));
     }
 
@@ -137,12 +159,13 @@ public class OrderController {
     }
 
     @PostMapping(value = "/{id}/yape-proof", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @Operation(summary = "Subir comprobante de Yape para revision (publico)")
+    @Operation(summary = "Subir comprobante de Yape para revision (requiere token del pedido)")
     public ResponseEntity<ApiResponse<OrderResponse>> uploadYapeProof(
             @PathVariable Long id,
+            @RequestParam(name = "token", required = false) String publicToken,
             @RequestPart(value = "proof", required = true) MultipartFile proofImage) throws IOException {
 
-        OrderResponse order = orderService.uploadYapeProof(id, proofImage);
+        OrderResponse order = orderService.uploadYapeProof(id, publicToken, proofImage);
 
         return ResponseEntity.ok(ApiResponse.success(
                 "Comprobante subido correctamente. Quedo pendiente de revision del administrador.",
@@ -268,6 +291,13 @@ public class OrderController {
         return ResponseEntity.ok(
                 ApiResponse.success("Mensaje de prueba enviado correctamente por WhatsApp.", responseData)
         );
+    }
+
+    private boolean isAdmin(Authentication authentication) {
+        return authentication != null
+                && authentication.isAuthenticated()
+                && authentication.getAuthorities().stream()
+                        .anyMatch(authority -> "ROLE_ADMIN".equals(authority.getAuthority()));
     }
 
     private String buildWhatsAppActionPage(boolean success, String title, String message) {

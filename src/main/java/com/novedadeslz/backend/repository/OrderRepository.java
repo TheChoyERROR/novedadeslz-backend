@@ -16,6 +16,8 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
     Optional<Order> findByOrderNumber(String orderNumber);
 
+    Optional<Order> findByOrderNumberIgnoreCase(String orderNumber);
+
     Page<Order> findByStatus(Order.OrderStatus status, Pageable pageable);
 
     Page<Order> findByCustomerPhoneContaining(String phone, Pageable pageable);

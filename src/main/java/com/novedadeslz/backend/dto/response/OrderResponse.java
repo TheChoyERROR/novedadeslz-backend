@@ -17,6 +17,8 @@ public class OrderResponse {
 
     private Long id;
     private String orderNumber;
+    /** Credencial de acceso del cliente a su propio pedido. Solo viaja a quien ya la posee. */
+    private String publicToken;
     private String customerName;
     private String customerPhone;
     private String customerEmail;

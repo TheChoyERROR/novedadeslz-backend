@@ -4,6 +4,7 @@ import com.novedadeslz.backend.model.Order;
 import com.novedadeslz.backend.security.JwtTokenProvider;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -31,6 +32,9 @@ import java.util.Locale;
 public class WhatsAppNotificationService {
 
     private final JwtTokenProvider jwtTokenProvider;
+
+    @Qualifier("notificationsRestTemplate")
+    private final RestTemplate restTemplate;
 
     @Value("${whatsapp.notifications.enabled:true}")
     private boolean notificationsEnabled;
@@ -70,8 +74,6 @@ public class WhatsAppNotificationService {
 
     @Value("${app.public-base-url:http://localhost:8080}")
     private String publicBaseUrl;
-
-    private final RestTemplate restTemplate = new RestTemplate();
 
     public boolean notifyAdminPaymentUnderReview(Order order) {
         return sendAdminMessage(
