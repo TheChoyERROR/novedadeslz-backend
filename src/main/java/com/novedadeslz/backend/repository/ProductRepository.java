@@ -4,6 +4,7 @@ import com.novedadeslz.backend.model.Product;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -34,4 +35,23 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 
     @Query("SELECT SUM(p.price * p.stock) FROM Product p WHERE p.active = true")
     Double getTotalInventoryValue();
+
+    /**
+     * Descuenta stock en una sola sentencia condicional.
+     *
+     * <p>Leer el stock y despues guardarlo no es seguro: dos pedidos simultaneos pueden leer 1
+     * unidad disponible y ambos guardar 0, vendiendo dos veces la misma. Al poner la condicion
+     * dentro del UPDATE, la base resuelve la carrera y devuelve 0 filas al que llego tarde.
+     *
+     * @return 1 si alcanzo el stock, 0 si no
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE Product p SET p.stock = p.stock - :quantity "
+            + "WHERE p.id = :productId AND p.trackInventory = true AND p.stock >= :quantity")
+    int reserveStock(@Param("productId") Long productId, @Param("quantity") int quantity);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE Product p SET p.stock = p.stock + :quantity "
+            + "WHERE p.id = :productId AND p.trackInventory = true")
+    int releaseStock(@Param("productId") Long productId, @Param("quantity") int quantity);
 }

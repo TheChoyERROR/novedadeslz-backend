@@ -124,12 +124,7 @@ public class OrderService {
                             "Producto no encontrado con ID: " + itemRequest.getProductId()
                     ));
 
-            if (!product.hasAvailableStock(itemRequest.getQuantity())) {
-                throw new BadRequestException(
-                        "Stock insuficiente para " + product.getName() +
-                                ". Disponible: " + product.getStock()
-                );
-            }
+            reserveStockOrFail(product, itemRequest.getQuantity());
 
             OrderItem item = OrderItem.builder()
                     .product(product)
@@ -144,6 +139,7 @@ public class OrderService {
         }
 
         order.setTotal(total);
+        order.setStockReserved(true);
 
         // saveAndFlush para que una colision de order_number salte aqui y no al cerrar la
         // transaccion, que es donde el reintento ya no seria posible.
@@ -282,18 +278,33 @@ public class OrderService {
         return digits.length() <= 9 ? digits : digits.substring(digits.length() - 9);
     }
 
+    /**
+     * Cancela un pedido que quedo sin comprobante y devuelve su stock. Lo usa la limpieza
+     * automatica; se revalida el estado porque el cliente pudo haber pagado entre medias.
+     */
+    @Transactional
+    public void cancelAbandonedOrder(Long orderId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Pedido no encontrado"));
+
+        if (order.getStatus() != Order.OrderStatus.PENDING) {
+            return;
+        }
+
+        order.setStatus(Order.OrderStatus.CANCELLED);
+        releaseReservedStock(order);
+        appendNote(order, "Cancelado automaticamente: quedo sin comprobante y se libero el stock.");
+        orderRepository.save(order);
+
+        log.info("Pedido {} cancelado por abandono", order.getOrderNumber());
+    }
+
     @Transactional
     public void deleteOrder(Long id) {
         Order order = orderRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Pedido no encontrado"));
 
-        if (order.getStatus() == Order.OrderStatus.CONFIRMED) {
-            for (OrderItem item : order.getItems()) {
-                Product product = item.getProduct();
-                product.increaseStock(item.getQuantity());
-                productRepository.save(product);
-            }
-        }
+        releaseReservedStock(order);
 
         orderRepository.delete(order);
     }
@@ -570,25 +581,52 @@ public class OrderService {
         });
     }
 
+    /**
+     * El stock se toma al crear el pedido, no al confirmarlo.
+     *
+     * <p>Antes se descontaba al aprobar el pago, asi que entre que el cliente hacia el pedido y el
+     * admin lo revisaba no habia nada reservado: dos personas podian comprar la misma ultima
+     * unidad y la segunda se enteraba recien al momento de aprobar. Ahora confirmar no mueve
+     * stock, porque ya estaba apartado, y solo cancelar lo devuelve.
+     */
     private void applyStockRules(Order order, Order.OrderStatus oldStatus, Order.OrderStatus newStatus) {
-        if (newStatus == Order.OrderStatus.CONFIRMED &&
-                oldStatus != Order.OrderStatus.CONFIRMED) {
+        if (newStatus == Order.OrderStatus.CANCELLED && oldStatus != Order.OrderStatus.CANCELLED) {
+            releaseReservedStock(order);
+        }
+    }
 
-            for (OrderItem item : order.getItems()) {
-                Product product = item.getProduct();
-                product.decreaseStock(item.getQuantity());
-                productRepository.save(product);
-            }
+    /**
+     * Devuelve al inventario lo que este pedido tenia apartado.
+     *
+     * <p>Es idempotente gracias a la marca: cancelar dos veces no duplica unidades, y los pedidos
+     * anteriores a la reserva no devuelven nada porque nunca tomaron nada.
+     */
+    private void releaseReservedStock(Order order) {
+        if (!Boolean.TRUE.equals(order.getStockReserved())) {
+            return;
         }
 
-        if (newStatus == Order.OrderStatus.CANCELLED &&
-                oldStatus == Order.OrderStatus.CONFIRMED) {
+        for (OrderItem item : order.getItems()) {
+            productRepository.releaseStock(item.getProduct().getId(), item.getQuantity());
+        }
 
-            for (OrderItem item : order.getItems()) {
-                Product product = item.getProduct();
-                product.increaseStock(item.getQuantity());
-                productRepository.save(product);
-            }
+        order.setStockReserved(false);
+    }
+
+    /**
+     * Aparta unidades con una sentencia condicional en la base. Comprobar y despues guardar no
+     * sirve: dos pedidos simultaneos leerian la misma unidad disponible y ambos la venderian.
+     */
+    private void reserveStockOrFail(Product product, int quantity) {
+        if (!product.isTrackingInventory()) {
+            return;
+        }
+
+        if (productRepository.reserveStock(product.getId(), quantity) == 0) {
+            throw new BadRequestException(
+                    "Stock insuficiente para " + product.getName() +
+                            ". Disponible: " + product.getStock()
+            );
         }
     }
 

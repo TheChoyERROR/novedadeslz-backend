@@ -78,6 +78,17 @@ public class Order {
     @Builder.Default
     private Boolean whatsappSent = false;
 
+    /**
+     * Si este pedido tiene unidades descontadas del stock.
+     *
+     * <p>Hace falta por la transicion: los pedidos creados antes de que existiera la reserva nunca
+     * descontaron nada, y liberarlos al cancelarlos inflaria el inventario con unidades que no
+     * existen. Solo se devuelve stock de los pedidos que efectivamente lo tomaron.
+     */
+    @Column(name = "stock_reserved", nullable = false)
+    @Builder.Default
+    private Boolean stockReserved = false;
+
     @Column(columnDefinition = "CLOB")
     private String notes;
 
