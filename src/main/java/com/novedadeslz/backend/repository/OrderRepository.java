@@ -12,6 +12,7 @@ import org.springframework.stereotype.Repository;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -53,6 +54,13 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     Long countByOrderNumberStartingWith(@Param("pattern") String pattern);
 
     long countByStatus(Order.OrderStatus status);
+
+    /** Pedidos en un estado dado creados antes del corte, para liberar el stock que retienen. */
+    @Query("SELECT o FROM Order o WHERE o.status = :status AND o.createdAt < :cutoff")
+    List<Order> findAbandonedOrders(
+            @Param("status") Order.OrderStatus status,
+            @Param("cutoff") LocalDateTime cutoff
+    );
 
     /**
      * Los ingresos se calculan en la base, no sumando en el navegador los pedidos que quepan en
