@@ -9,7 +9,9 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.Optional;
 
 @Repository
@@ -49,6 +51,22 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
     @Query(value = "SELECT COUNT(*) FROM orders o WHERE o.order_number LIKE :pattern", nativeQuery = true)
     Long countByOrderNumberStartingWith(@Param("pattern") String pattern);
+
+    long countByStatus(Order.OrderStatus status);
+
+    /**
+     * Los ingresos se calculan en la base, no sumando en el navegador los pedidos que quepan en
+     * una pagina. COALESCE evita devolver null cuando todavia no hay ventas.
+     */
+    @Query("SELECT COALESCE(SUM(o.total), 0) FROM Order o WHERE o.status IN :statuses")
+    BigDecimal sumTotalByStatusIn(@Param("statuses") Collection<Order.OrderStatus> statuses);
+
+    @Query("SELECT COALESCE(SUM(o.total), 0) FROM Order o "
+            + "WHERE o.status IN :statuses AND o.createdAt >= :from")
+    BigDecimal sumTotalByStatusInSince(
+            @Param("statuses") Collection<Order.OrderStatus> statuses,
+            @Param("from") LocalDateTime from
+    );
 
     @Query("SELECT o FROM Order o WHERE o.status = :status AND o.createdAt >= :date")
     Page<Order> findRecentOrdersByStatus(
