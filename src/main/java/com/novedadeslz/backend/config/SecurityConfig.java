@@ -97,6 +97,7 @@ public class SecurityConfig {
                 // Endpoints protegidos - requieren ADMIN
                 .requestMatchers("/api/products/**").hasRole("ADMIN")
                 .requestMatchers("/api/orders/**").hasRole("ADMIN")
+                .requestMatchers("/api/admin/**").hasRole("ADMIN")
 
                 .anyRequest().authenticated()
             )

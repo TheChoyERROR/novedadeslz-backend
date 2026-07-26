@@ -27,6 +27,11 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     @Query("SELECT COUNT(p) FROM Product p WHERE p.active = true")
     Long countActiveProducts();
 
+    /** Productos activos que llevan control de inventario y ya estan por agotarse. */
+    @Query("SELECT COUNT(p) FROM Product p "
+            + "WHERE p.active = true AND p.trackInventory = true AND p.stock <= :threshold")
+    long countLowStockProducts(@Param("threshold") Integer threshold);
+
     @Query("SELECT SUM(p.price * p.stock) FROM Product p WHERE p.active = true")
     Double getTotalInventoryValue();
 }
