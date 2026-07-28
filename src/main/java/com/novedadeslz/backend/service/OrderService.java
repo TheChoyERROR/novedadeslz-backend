@@ -166,12 +166,17 @@ public class OrderService {
             LocalDateTime endDate,
             Pageable pageable) {
 
+        // La cadena anterior era excluyente: filtrar por estado ignoraba la busqueda, asi que el
+        // admin no podia buscar un pedido dentro de los que esperan revision.
+        String search = StringUtils.hasText(customerPhone) ? customerPhone.trim() : null;
         Page<Order> orders;
 
-        if (status != null) {
+        if (status != null && search != null) {
+            orders = orderRepository.searchOrdersByStatus(status, search, pageable);
+        } else if (status != null) {
             orders = orderRepository.findByStatus(status, pageable);
-        } else if (customerPhone != null) {
-            orders = orderRepository.findByCustomerPhoneContaining(customerPhone, pageable);
+        } else if (search != null) {
+            orders = orderRepository.searchOrders(search, pageable);
         } else if (startDate != null && endDate != null) {
             orders = orderRepository.findByCreatedAtBetween(startDate, endDate, pageable);
         } else {
