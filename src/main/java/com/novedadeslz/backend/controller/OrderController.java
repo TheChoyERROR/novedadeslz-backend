@@ -87,7 +87,9 @@ public class OrderController {
     @Operation(summary = "Obtener todos los pedidos (requiere ADMIN)")
     public ResponseEntity<ApiResponse<PageResponse<OrderResponse>>> getAllOrders(
             @RequestParam(required = false) Order.OrderStatus status,
-            @RequestParam(required = false) String customerPhone,
+            // Busca en numero de pedido, nombre y telefono. Conserva el nombre del parametro para
+            // no romper enlaces ya guardados del panel.
+            @RequestParam(required = false, name = "customerPhone") String search,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endDate,
             @RequestParam(defaultValue = "0") int page,
@@ -102,7 +104,7 @@ public class OrderController {
         Pageable pageable = PageRequest.of(page, size, Sort.by(sortDirection, sortBy));
 
         Page<OrderResponse> orders = orderService.getAllOrders(
-                status, customerPhone, startDate, endDate, pageable
+                status, search, startDate, endDate, pageable
         );
 
         return ResponseEntity.ok(ApiResponse.success(PageResponse.from(orders)));

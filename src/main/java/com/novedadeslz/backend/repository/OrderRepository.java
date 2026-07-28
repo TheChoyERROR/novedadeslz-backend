@@ -35,6 +35,30 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     @EntityGraph(value = ITEMS_GRAPH, type = EntityGraph.EntityGraphType.LOAD)
     Page<Order> findByCustomerPhoneContaining(String phone, Pageable pageable);
 
+    /**
+     * Busqueda del panel: numero de pedido, nombre o telefono.
+     *
+     * <p>Son dos metodos en vez de uno con ":status IS NULL OR ..." porque pasar un enum nulo como
+     * parametro es una fuente conocida de problemas de tipado en JPQL. Explicito y predecible.
+     */
+    @EntityGraph(value = ITEMS_GRAPH, type = EntityGraph.EntityGraphType.LOAD)
+    @Query("SELECT o FROM Order o WHERE "
+            + "LOWER(o.orderNumber) LIKE LOWER(CONCAT('%', :search, '%')) OR "
+            + "LOWER(o.customerName) LIKE LOWER(CONCAT('%', :search, '%')) OR "
+            + "o.customerPhone LIKE CONCAT('%', :search, '%')")
+    Page<Order> searchOrders(@Param("search") String search, Pageable pageable);
+
+    @EntityGraph(value = ITEMS_GRAPH, type = EntityGraph.EntityGraphType.LOAD)
+    @Query("SELECT o FROM Order o WHERE o.status = :status AND ("
+            + "LOWER(o.orderNumber) LIKE LOWER(CONCAT('%', :search, '%')) OR "
+            + "LOWER(o.customerName) LIKE LOWER(CONCAT('%', :search, '%')) OR "
+            + "o.customerPhone LIKE CONCAT('%', :search, '%'))")
+    Page<Order> searchOrdersByStatus(
+            @Param("status") Order.OrderStatus status,
+            @Param("search") String search,
+            Pageable pageable
+    );
+
     @EntityGraph(value = ITEMS_GRAPH, type = EntityGraph.EntityGraphType.LOAD)
     Page<Order> findByCreatedAtBetween(LocalDateTime start, LocalDateTime end, Pageable pageable);
 
